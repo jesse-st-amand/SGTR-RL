@@ -1,0 +1,32 @@
+[build-system]
+requires = ["setuptools>=64", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "sgtr-rl"
+version = "0.1.0"
+description = "SGTR-RL project"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "self-rec-framework @ git+https://github.com/MARS-3-0-self-recognition/self-rec-framework.git@js/package",
+    "tinker>=0.9.0",
+    "inspect-ai>=0.3.0",
+    "pyyaml>=6.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "ruff>=0.9.10",
+    "pre-commit>=4.3.0",
+]
+
+[tool.setuptools]
+packages = {find = {where = ["."], include = ["sgtr_rl*"], exclude = ["_external*", "*.egg-info", "build", "dist", "tests*"]}}
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "N", "W"]

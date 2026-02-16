@@ -1,0 +1,10 @@
+[submodule "_external/self-rec-framework"]
+	path = _external/self-rec-framework
+	url = https://github.com/MARS-3-0-self-recognition/self-rec-framework.git
+	branch = js/package
+[submodule "_external/tinker-cookbook"]
+	path = _external/tinker-cookbook
+	url = https://github.com/thinking-machines-lab/tinker-cookbook.git
+[submodule "_external/inspect_ai"]
+	path = _external/inspect_ai
+	url = https://github.com/UKGovernmentBEIS/inspect_ai.git

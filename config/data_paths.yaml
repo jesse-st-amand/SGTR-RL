@@ -1,0 +1,24 @@
+# Data Paths Configuration
+# ========================
+#
+# This file specifies where to find cached generations from the self-rec-framework.
+# The code will check these locations in order:
+#   1. Path specified here (if absolute or relative to project root)
+#   2. Symlink at data/cached_generations (if it exists)
+#   3. Raise error if not found
+#
+# For collaborators: Update this path to point to your local data directory
+
+# Path to cached generations from self-rec-framework experiments
+# Can be:
+#   - Relative to project root: "./data/cached_generations"
+#   - Absolute path: "/home/username/path/to/data"
+#   - Default uses symlink: data/cached_generations -> ../../self-rec-framework/data/results
+cached_generations_path: "./data/cached_generations"
+
+# Optional: Override specific dataset paths if needed
+# datasets:
+#   wikisum: "./data/cached_generations/wikisum"
+#   bigcodebench: "./data/cached_generations/bigcodebench"
+#   pku_saferlhf: "./data/cached_generations/pku_saferlhf"
+#   sharegpt: "./data/cached_generations/sharegpt"

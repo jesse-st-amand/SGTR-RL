@@ -132,3 +132,13 @@ dmypy.json
 # OS
 .DS_Store
 Thumbs.db
+
+# Data directories (large files, not tracked in git)
+data/cached_generations/
+data/training_data/
+data/checkpoints/
+data/results/
+
+# Keep directory structure but ignore contents
+!data/.gitkeep
+!data/README.md
