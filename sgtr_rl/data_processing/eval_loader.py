@@ -26,7 +26,7 @@ class EvalSample:
         evaluator_model: Model that performed evaluation
         generator_model: Model that generated the text being evaluated
         dataset: Dataset name (e.g., "wikisum")
-        experiment: Experiment name (e.g., "ICML_04_UT_IND-Q_Rec_NPr_FA_Rsn")
+        experiment: Experiment name from directory
         metadata: Additional metadata from eval file
     """
 
@@ -199,7 +199,7 @@ def load_experiment_evals(
 
     Example:
         >>> samples = load_experiment_evals(
-        ...     Path("data/cached_generations/wikisum/.../ICML_04_..."),
+        ...     Path("data/cached_generations/wikisum/training_set_1-20/experiment_name"),
         ...     evaluator_model="qwen-3.0-80b-thinking"
         ... )
         >>> print(f"Loaded {len(samples)} samples from Qwen3-80B evaluations")
