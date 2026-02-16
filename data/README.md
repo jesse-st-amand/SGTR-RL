@@ -65,7 +65,7 @@ data/
 ## Data Sources
 
 ### Cached Generations
-Pre-generated model outputs from the original SGTR paper experiments. These are used as training data for DPO.
+Pre-generated model outputs from previous experiments. These are used as training data for DPO.
 
 **Location**: Should be symlinked or copied to `data/cached_generations/`
 

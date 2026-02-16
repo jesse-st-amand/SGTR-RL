@@ -6,7 +6,7 @@ This project builds a reinforcement learning (RL) pipeline to train language mod
 
 ## Project Background
 
-This work extends the research presented in **"Self-Generated Text Recognition: A Highly Context-Dependent Emergent Capability"** (submitted to ICLR 2026). The paper demonstrated that some frontier models can recognize their own outputs, but performance varies greatly across experimental conditions (pairwise vs individual assessment, different task domains, etc.).
+This project builds a reinforcement learning pipeline to train language models on self-generated text recognition tasks. The goal is to test whether improvements generalize across different experimental operationalizations.
 
 **Key Research Questions**:
 1. Can we train models to improve SGTR performance?
@@ -262,7 +262,7 @@ SGTR-RL/
 │   └── configs/                   # Shared config files
 │
 ├── data/                          # Data directory
-│   ├── cached_generations/        # Pre-generated model outputs from paper
+│   ├── cached_generations/        # Pre-generated model outputs
 │   ├── training_data/             # Processed DPO training triples
 │   ├── checkpoints/               # Model checkpoints
 │   └── results/                   # Training results and logs
@@ -277,7 +277,7 @@ SGTR-RL/
 
 ### self-rec-framework
 
-The experimental evaluation framework from the original SGTR paper.
+The experimental evaluation framework for self-generated text recognition tasks.
 
 - **Installed from**: https://github.com/MARS-3-0-self-recognition/self-rec-framework.git
 - **Branch**: `js/package`
@@ -393,12 +393,6 @@ uv run pre-commit run --all-files
 ## Contributing
 
 This is a research project. For questions or collaboration, please contact the project team.
-
-## Related Work
-
-**Original Paper**: "Self-Generated Text Recognition: A Highly Context-Dependent Emergent Capability"
-- Submitted to ICLR 2026 Workshop on Agents in the Wild
-- PDF included in repository: `114_Self_Generated_Text_RecognPDF_260216_010129.pdf`
 
 ## License
 

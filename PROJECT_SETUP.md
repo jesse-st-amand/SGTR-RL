@@ -2,31 +2,19 @@
 
 ## Project Overview
 
-**SGTR-RL** is a reinforcement learning research project that extends the work presented in "Self-Generated Text Recognition: A Highly Context-Dependent Emergent Capability" (ICLR 2026 submission). The project builds an RL pipeline to train language models on Self-Generated Text Recognition (SGTR) tasks and tests whether improvements generalize across different experimental operationalizations.
+**SGTR-RL** is a reinforcement learning research project that builds an RL pipeline to train language models on Self-Generated Text Recognition (SGTR) tasks. The project tests whether improvements generalize across different experimental operationalizations.
 
 **Core Research Goal**: Determine if training on one SGTR operationalization (e.g., Individual recognition) improves performance on other operationalizations (e.g., Pairwise comparison), providing evidence for shared "self-recognition" representations rather than task-specific heuristics.
 
 ### Key Features
 
 - **RL Training Pipeline**: DPO (Direct Preference Optimization) with Chain-of-Thought reasoning
-- **Integration**: Builds on `self-rec-framework` (original paper's codebase)
+- **Integration**: Builds on `self-rec-framework` evaluation framework
 - **Infrastructure**: Uses Tinker SDK for managed RL training on Together.ai
 - **Cost-Effective**: Starts with small models (~1.5B params) for rapid iteration
 - **Evaluation**: Comprehensive testing across operationalizations, domains, and general capabilities
 
 ## Research Background
-
-### The SGTR Paper
-
-The original paper demonstrated that some frontier language models can recognize their own outputs, but with important caveats:
-
-1. **Performance varies by paradigm**: Models perform much better at pairwise selection (choosing between two texts) than individual assessment (judging a single text)
-
-2. **Quality heuristic dominates**: Models often use a "quality-based" heuristic, attributing high-quality text to themselves regardless of actual authorship
-
-3. **Domain dependence**: Recognition accuracy varies across task domains (summarization, code, safety questions)
-
-4. **Model capability correlation**: Stronger models generally show better SGTR performance
 
 ### Research Questions for This Project
 
@@ -49,7 +37,7 @@ The original paper demonstrated that some frontier language models can recognize
 
 **Training Phases**:
 1. **Phase 1 (Current focus)**: Train on pre-cached model generations
-   - Uses existing outputs from original paper's experiments
+   - Uses existing pre-generated model outputs
    - Controls for distribution shift
    - Establishes baseline performance
 
@@ -134,7 +122,7 @@ Answer: 2  [INCORRECT - actually model's own output]
 - **Dataset**: WikiSum (article summarization)
 - **Operationalization**: Individual (IND) recognition
 - **Model**: Qwen/Qwen2-1.5B (base, not instruct)
-- **Training data**: Pre-cached generations from original paper
+- **Training data**: Pre-cached model generations
 - **Regularization**: MMLU questions interleaved
 
 **Evaluation Plan**:
@@ -269,7 +257,7 @@ SGTR-RL/
 │       └── training_config.yaml # Default training hyperparameters
 │
 ├── data/                        # Data directory (not in git)
-│   ├── cached_generations/      # Pre-generated model outputs from paper
+│   ├── cached_generations/      # Pre-generated model outputs
 │   │   ├── wikisum/
 │   │   ├── bigcodebench/
 │   │   ├── pku_saferlhf/
@@ -288,8 +276,8 @@ SGTR-RL/
 └── _external/                   # External dependencies (for reference)
     ├── self-rec-framework/      # Git submodule pointing to js/package branch
     │   ├── self_rec_framework/  # Main package
-    │   ├── experiments/         # Original paper experiments
-    │   └── data/                # Original paper data
+    │   ├── experiments/         # Experiment configurations
+    │   └── data/                # Dataset loaders
     └── tinker-cookbook/         # Git submodule for Tinker examples
         └── examples/
             ├── dpo/             # DPO training examples
@@ -309,7 +297,7 @@ SGTR-RL/
 - Added as git submodule in `_external/self-rec-framework`
 - Tracks the `js/package` branch from: `https://github.com/MARS-3-0-self-recognition/self-rec-framework`
 - **Purpose**: Easy reference for developers/LLMs, but code uses installed package version (not submodule)
-- **Contains**: Experiment configs, evaluation tasks, datasets, scoring functions from original paper
+- **Contains**: Experiment configs, evaluation tasks, datasets, scoring functions
 
 **tinker-cookbook:**
 - Added as git submodule in `_external/tinker-cookbook`
