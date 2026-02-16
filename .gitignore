@@ -142,3 +142,6 @@ data/results/
 # Keep directory structure but ignore contents
 !data/.gitkeep
 !data/README.md
+
+# PDF files (anonymous submissions)
+*.pdf
