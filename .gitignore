@@ -133,6 +133,9 @@ dmypy.json
 .DS_Store
 Thumbs.db
 
+# Logs
+logs/
+
 # Data directories (large files, not tracked in git)
 data/cached_generations/
 data/training_data/
@@ -145,3 +148,5 @@ data/results/
 
 # PDF files (anonymous submissions)
 *.pdf
+
+.claude/
