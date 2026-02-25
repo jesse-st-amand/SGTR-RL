@@ -34,10 +34,6 @@ checkpointing:
   save_steps: 50
   eval_steps: 50
 
-output:
-  checkpoint_dir: data/checkpoints/01_RL_grpo_IND_WikiSum
-  results_dir: data/results/01_RL_grpo_IND_WikiSum
-
 evaluation:
   - type: sgtr
     name: "IND-WikiSum (in-distribution)"

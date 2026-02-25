@@ -136,11 +136,18 @@ Thumbs.db
 # Logs
 logs/
 
+# Analysis plots
+analysis/plots/
+
+# Run directories (unified training outputs)
+results/
+
 # Data directories (large files, not tracked in git)
 data/cached_generations/
 data/training_data/
 data/checkpoints/
 data/results/
+data/
 
 # Keep directory structure but ignore contents
 !data/.gitkeep

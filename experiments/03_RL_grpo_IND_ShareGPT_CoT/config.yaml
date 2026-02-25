@@ -1,5 +1,5 @@
-experiment_name: "02_RL_grpo_IND_ShareGPT"
-description: "GRPO de-risking: train ll-3.1-8b on IND self-recognition vs qwen-2.5-7b, ShareGPT data, Tinker backend"
+experiment_name: "03_RL_grpo_IND_ShareGPT_CoT"
+description: "GRPO with CoT: train ll-3.1-8b on IND self-recognition vs qwen-2.5-7b, ShareGPT, Tinker"
 
 algorithm: grpo
 backend: tinker
@@ -9,8 +9,8 @@ data:
   generator_models: [qwen-2.5-7b]
   dataset: sharegpt
   subsets: [english_26, english2_74]
-  train_file: data/training_data/sharegpt_ind/train.jsonl
-  val_file: data/training_data/sharegpt_ind/val.jsonl
+  train_file: data/training_data/sharegpt_ind_cot/train.jsonl
+  val_file: data/training_data/sharegpt_ind_cot/val.jsonl
 
 model:
   name: meta-llama/Llama-3.1-8B-Instruct
@@ -23,8 +23,8 @@ hyperparameters:
   num_epochs: 3
   per_device_train_batch_size: 4
   gradient_accumulation_steps: 4
-  num_rollouts_per_prompt: 4
-  max_completion_length: 64
+  num_rollouts_per_prompt: 8
+  max_completion_length: 512
   warmup_ratio: 0.1
   bf16: true
   seed: 42

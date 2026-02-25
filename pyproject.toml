@@ -15,19 +15,17 @@ dependencies = [
     "inspect-ai>=0.3.0",
     "pyyaml>=6.0",
     "python-dotenv>=1.0",
-]
-
-[project.optional-dependencies]
-dev = [
-    "ruff>=0.9.10",
-    "pre-commit>=4.3.0",
-]
-training = [
     "torch>=2.0",
     "trl>=0.15",
     "peft>=0.14",
     "transformers>=4.47",
     "accelerate>=1.0",
+    "tensorboard>=2.14",
+    "ruff>=0.9.10",
+    "pre-commit>=4.3.0",
+    "ipykernel>=6.0",
+    "matplotlib>=3.8",
+    "wandb>=0.25.0",
 ]
 
 [tool.setuptools]

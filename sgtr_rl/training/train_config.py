@@ -35,11 +35,18 @@ class TrainingConfig:
     num_rollouts_per_prompt: int = 4  # rollouts per prompt per step
     max_completion_length: int = 1024  # max tokens for generated rollout
     beta: float = 0.1  # KL penalty (if used)
+    sampling_temperature: float = 1.0  # temperature for rollout sampling
 
     # Data
     train_file: str = ""
     val_file: str = ""
     output_dir: str = ""
+
+    # Run directory (set by run_dir.create_run_dir)
+    run_dir: str = ""
+
+    # Logging
+    wandb_project: str | None = None  # W&B project name; None = wandb disabled
 
     # Checkpointing
     save_steps: int = 50  # checkpoint every N steps
@@ -68,7 +75,6 @@ def load_training_config(yaml_path: str | Path) -> TrainingConfig:
     hp = cfg.get("hyperparameters", {})
     data_cfg = cfg.get("data", {})
     ckpt_cfg = cfg.get("checkpointing", {})
-    output_cfg = cfg.get("output", {})
 
     return TrainingConfig(
         algorithm=cfg.get("algorithm", "grpo"),
@@ -91,10 +97,12 @@ def load_training_config(yaml_path: str | Path) -> TrainingConfig:
         num_rollouts_per_prompt=hp.get("num_rollouts_per_prompt", 4),
         max_completion_length=hp.get("max_completion_length", 1024),
         beta=hp.get("beta", 0.1),
+        sampling_temperature=hp.get("sampling_temperature", 1.0),
         # Data
         train_file=data_cfg.get("train_file", ""),
         val_file=data_cfg.get("val_file", ""),
-        output_dir=output_cfg.get("checkpoint_dir", ""),
+        # Logging
+        wandb_project=cfg.get("wandb_project"),
         # Checkpointing
         save_steps=ckpt_cfg.get("save_steps", 50),
         eval_steps=ckpt_cfg.get("eval_steps", 50),

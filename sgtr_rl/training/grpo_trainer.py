@@ -6,7 +6,9 @@ import time
 from pathlib import Path
 
 from sgtr_rl.training.train_config import TrainingConfig
-from sgtr_rl.training.reward import sgtr_binary_reward
+from sgtr_rl.training.reward import sgtr_binary_reward, _extract_answer
+from sgtr_rl.training.eval import run_val_eval
+from sgtr_rl.data_processing.validate_data import validate_training_data
 
 logger = logging.getLogger(__name__)
 
@@ -92,12 +94,14 @@ class LocalGRPOTrainer:
         self._load_prompt_dataset()
         reward_fn = self._build_reward_fn()
 
-        output_dir = (
+        checkpoint_dir = str(Path(self.config.run_dir) / "checkpoints") if self.config.run_dir else (
             self.config.output_dir or f"data/checkpoints/{self.config.experiment_name}"
         )
 
+        tb_dir = str(Path(self.config.run_dir) / "tensorboard") if self.config.run_dir else None
+
         grpo_config = GRPOConfig(
-            output_dir=output_dir,
+            output_dir=checkpoint_dir,
             num_train_epochs=self.config.num_epochs,
             per_device_train_batch_size=self.config.per_device_train_batch_size,
             gradient_accumulation_steps=self.config.gradient_accumulation_steps,
@@ -109,7 +113,8 @@ class LocalGRPOTrainer:
             bf16=self.config.bf16,
             seed=self.config.seed,
             logging_steps=10,
-            report_to="none",
+            report_to="tensorboard" if tb_dir else "none",
+            **({"logging_dir": tb_dir} if tb_dir else {}),
         )
 
         trainer = GRPOTrainer(
@@ -123,7 +128,7 @@ class LocalGRPOTrainer:
         trainer.train(resume_from_checkpoint=resume_from_checkpoint)
 
         # Save final checkpoint
-        final_dir = Path(output_dir) / "checkpoint-final"
+        final_dir = Path(checkpoint_dir) / "checkpoint-final"
         final_dir.mkdir(parents=True, exist_ok=True)
         trainer.save_model(str(final_dir))
         self.tokenizer.save_pretrained(str(final_dir))
@@ -188,6 +193,18 @@ class TinkerRLTrainer:
             f"  target: {target!r}, reward: {reward}"
         )
 
+    def _load_val_prompts(self) -> list[dict]:
+        """Load validation dataset from JSONL, if configured."""
+        if not self.config.val_file or not Path(self.config.val_file).exists():
+            return []
+        prompts = []
+        with open(self.config.val_file, "r") as f:
+            for line in f:
+                if line.strip():
+                    prompts.append(json.loads(line))
+        logger.info(f"Loaded {len(prompts)} validation prompts")
+        return prompts
+
     def train(self, resume_from_checkpoint: str | None = None):
         """Run GRPO training via Tinker API.
 
@@ -203,9 +220,20 @@ class TinkerRLTrainer:
         import torch
         from tinker_cookbook import model_info, renderers
         from tinker_cookbook.tokenizer_utils import get_tokenizer
+        from tinker_cookbook.utils import ml_log
 
         cfg = self.config
         prompts = self._load_prompts()
+        val_prompts = self._load_val_prompts()
+
+        # Validate data integrity
+        if cfg.val_file and Path(cfg.val_file).exists():
+            summary = validate_training_data(cfg.train_file, cfg.val_file)
+            logger.info(
+                f"Data validation passed: {summary['train_records']} train, "
+                f"{summary['val_records']} val, {summary['train_uuids']} train UUIDs, "
+                f"{summary['val_uuids']} val UUIDs, format={summary['format']}"
+            )
 
         # Log example prompt
         self._log_example_prompt(prompts)
@@ -226,6 +254,12 @@ class TinkerRLTrainer:
         sampling_params = types.SamplingParams(
             max_tokens=cfg.max_completion_length,
             stop=renderer.get_stop_sequences(),
+            temperature=cfg.sampling_temperature,
+        )
+        eval_params = types.SamplingParams(
+            max_tokens=cfg.max_completion_length,
+            stop=renderer.get_stop_sequences(),
+            temperature=0.0,
         )
         adam_params = types.AdamParams(
             learning_rate=cfg.learning_rate, beta1=0.9, beta2=0.95, eps=1e-8
@@ -236,19 +270,39 @@ class TinkerRLTrainer:
         n_batches = len(prompts) // batch_size
         n_epochs = cfg.num_epochs
 
-        log_dir = cfg.output_dir or f"data/checkpoints/{cfg.experiment_name}"
-        Path(log_dir).mkdir(parents=True, exist_ok=True)
+        checkpoint_dir = str(Path(cfg.run_dir) / "checkpoints") if cfg.run_dir else (
+            cfg.output_dir or f"data/checkpoints/{cfg.experiment_name}"
+        )
+        Path(checkpoint_dir).mkdir(parents=True, exist_ok=True)
+
+        # Metrics logging (wandb + JSON, replaces tensorboard)
+        log_dir = str(Path(cfg.run_dir) / "metrics") if cfg.run_dir else None
+        ml_logger = ml_log.setup_logging(
+            log_dir=log_dir or ".",
+            wandb_project=cfg.wandb_project,
+            wandb_name=cfg.experiment_name,
+            config=cfg,
+            do_configure_logging_module=False,
+        )
 
         logger.info(
             f"Training: {n_epochs} epochs, {n_batches} batches/epoch, "
             f"batch_size={batch_size}, group_size={group_size}, "
-            f"total_steps={n_batches * n_epochs}"
+            f"total_steps={n_batches * n_epochs}, "
+            f"temperature={cfg.sampling_temperature}"
         )
 
         global_step = 0
         logged_first_output = False
         cumulative_correct = 0
         cumulative_total = 0
+
+        # Epoch 0 baseline: evaluate untrained model
+        logger.info("Running epoch 0 baseline evaluation (untrained model)...")
+        run_val_eval(
+            val_prompts, training_client, renderer, eval_params,
+            ml_logger, step=0, epoch=0, run_dir=cfg.run_dir,
+        )
 
         for epoch in range(n_epochs):
             epoch_rewards: list[float] = []
@@ -281,14 +335,20 @@ class TinkerRLTrainer:
                 batch_rewards: list[float] = []
                 batch_correct = 0
                 batch_total = 0
+                groups_skipped = 0
+                batch_advantages: list[float] = []
+                batch_answers: dict[str, int] = {"1": 0, "2": 0, "other": 0}
 
-                for future, prompt_input, item in zip(futures, model_inputs, batch):
+                for group_idx, (future, prompt_input, item) in enumerate(
+                    zip(futures, model_inputs, batch)
+                ):
                     sample_result = future.result()
                     target = item["target"]
 
                     rewards_G: list[float] = []
                     sampled_tokens_G: list[list[int]] = []
                     logprobs_G: list[list[float]] = []
+                    contents_G: list[str] = []
 
                     for sequence in sample_result.sequences:
                         sampled_tokens_G.append(sequence.tokens)
@@ -297,8 +357,16 @@ class TinkerRLTrainer:
 
                         parsed_msg, _ = renderer.parse_response(sequence.tokens)
                         content = renderers.get_text_content(parsed_msg)
+                        contents_G.append(content)
                         reward = self._get_reward(content, target)
                         rewards_G.append(reward)
+
+                        # Track answer distribution
+                        answer = _extract_answer(content)
+                        if answer in ("1", "2"):
+                            batch_answers[answer] += 1
+                        else:
+                            batch_answers["other"] += 1
 
                         # Log the very first output
                         if not logged_first_output:
@@ -317,7 +385,24 @@ class TinkerRLTrainer:
 
                     # Skip groups where all rewards are identical (no signal)
                     if all(a == 0.0 for a in advantages_G):
+                        groups_skipped += 1
                         continue
+
+                    batch_advantages.extend(advantages_G)
+
+                    # Log detailed group info for first group with signal each batch
+                    if len(batch_advantages) == len(advantages_G):
+                        n_correct = sum(int(r == 1.0) for r in rewards_G)
+                        sample_content = contents_G[0]
+                        if len(sample_content) > 120:
+                            sample_content = sample_content[:60] + "..." + sample_content[-40:]
+                        logger.debug(
+                            f"  group {group_idx}: target={target} "
+                            f"rewards={[int(r) for r in rewards_G]} "
+                            f"({n_correct}/{len(rewards_G)} correct) "
+                            f"advantages=[{', '.join(f'{a:+.2f}' for a in advantages_G)}] "
+                            f"sample_completion={sample_content!r}"
+                        )
 
                     # Build training datums
                     ob_len = prompt_input.length - 1
@@ -372,12 +457,32 @@ class TinkerRLTrainer:
                 batch_acc = batch_correct / batch_total if batch_total else 0.0
                 running_acc = cumulative_correct / cumulative_total if cumulative_total else 0.0
 
+                adv_abs_mean = (
+                    sum(abs(a) for a in batch_advantages) / len(batch_advantages)
+                    if batch_advantages else 0.0
+                )
+
                 logger.info(
                     f"[epoch {epoch+1}/{n_epochs}] batch {batch_idx+1}/{n_batches} | "
                     f"reward={avg_reward:.3f} | acc={batch_acc:.1%} (running={running_acc:.1%}) | "
-                    f"datums={len(datums)} | {elapsed:.1f}s"
+                    f"datums={len(datums)} | skipped={groups_skipped}/{len(batch)} groups | "
+                    f"adv_mag={adv_abs_mean:.3f} | "
+                    f"answers={{1:{batch_answers['1']},2:{batch_answers['2']},?:{batch_answers['other']}}} | "
+                    f"{elapsed:.1f}s"
                 )
                 global_step += 1
+
+                ml_logger.log_metrics({
+                    "train/reward": avg_reward,
+                    "train/accuracy": batch_acc,
+                    "train/running_accuracy": running_acc,
+                    "train/datums": len(datums),
+                    "train/groups_skipped": groups_skipped,
+                    "train/advantage_magnitude": adv_abs_mean,
+                    "train/answers_1_pct": batch_answers["1"] / max(batch_total, 1),
+                    "train/answers_other_pct": batch_answers["other"] / max(batch_total, 1),
+                    "train/batch_time_s": elapsed,
+                }, step=global_step)
 
             epoch_avg = sum(epoch_rewards) / len(epoch_rewards) if epoch_rewards else 0.0
             logger.info(
@@ -386,6 +491,15 @@ class TinkerRLTrainer:
                 f"= {cumulative_correct/cumulative_total:.1%}" if cumulative_total else
                 f"Epoch {epoch+1} complete | avg reward={epoch_avg:.3f}"
             )
+            ml_logger.log_metrics({"train/epoch_reward": epoch_avg}, step=global_step)
+
+            # Validation evaluation at each epoch boundary
+            run_val_eval(
+                val_prompts, training_client, renderer, eval_params,
+                ml_logger, step=global_step, epoch=epoch + 1, run_dir=cfg.run_dir,
+            )
+
+        ml_logger.close()
 
         # Save final checkpoint
         from tinker_cookbook import checkpoint_utils
@@ -393,11 +507,11 @@ class TinkerRLTrainer:
         checkpoint_utils.save_checkpoint(
             training_client=training_client,
             name="final",
-            log_path=log_dir,
+            log_path=checkpoint_dir,
             kind="both",
             loop_state={"batch": global_step},
         )
-        logger.info(f"Training complete. Checkpoint saved to {log_dir}")
+        logger.info(f"Training complete. Checkpoint saved to {checkpoint_dir}")
         logger.info(
             f"Final stats: {global_step} steps, "
             f"accuracy={cumulative_correct}/{cumulative_total} "

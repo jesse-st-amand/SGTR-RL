@@ -1,0 +1,22 @@
+experiment_name: "11_sft_pw_debug_all2s"
+description: "SFT debug: overfit 16 PW samples, all targets=2"
+
+algorithm: sft
+backend: tinker
+
+data:
+  train_file: data/training_data/pw_debug_all2s/train.jsonl
+  val_file: data/training_data/sharegpt_pw/val.jsonl
+
+model:
+  name: meta-llama/Llama-3.1-8B-Instruct
+  lora_rank: 32
+  lora_alpha: 64
+  lora_dropout: 0.05
+
+hyperparameters:
+  learning_rate: 1.0e-4
+  num_epochs: 10
+  per_device_train_batch_size: 16
+  max_completion_length: 512
+  seed: 42
