@@ -20,11 +20,10 @@ SGTR-RL/
 │   └── scripts/                  # CLI entry points
 ├── experiments/                  # Experiment configs (one YAML per experiment)
 ├── analysis/                     # Log parsing, plotting, and Jupyter notebook
-├── baselines/                    # Baseline evaluation results (JSON)
+├── scripts/                      # Plotting and analysis scripts
 ├── config/                       # Data path configuration
 ├── data/                         # Data directory (gitignored, see below)
 ├── results/                      # Training run outputs (gitignored)
-├── _external/                    # Git submodules (reference only, not used at runtime)
 ├── docs/                         # Documentation (this file)
 ├── pyproject.toml                # Package definition and dependencies
 └── uv.lock                       # Locked dependency versions
@@ -309,7 +308,6 @@ checkpointing:
 
 - **DPO infrastructure** (`eval_loader.py`, `triple_generator.py`, `test_data_loading.py`) is unused but kept for potential future use
 - `PROJECT_SETUP.md` and `SETUP_COMPLETE.md` are stale planning documents from early project phases
-- `_external/` submodules (`inspect_ai/`, `self-rec-framework/`) are mostly empty — packages are installed via pip from git URLs
 - `config/paths.py` has helper functions (`get_checkpoints_path()`, etc.) that aren't used by the current training pipeline
 - `data/README.md` references DPO-era terminology and paths
 - **Small dataset**: Current PW dataset is 100 unique pairs (200 records). Results are promising (90% val accuracy with SFT) but more data would improve robustness
