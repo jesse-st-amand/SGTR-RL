@@ -21,7 +21,24 @@ model:
 
 hyperparameters:
   learning_rate: 5.0e-5
-  num_epochs: 50
+  num_epochs: 20
   per_device_train_batch_size: 16
   max_completion_length: 512
   seed: 42
+
+benchmark_evals:
+  mmlu_20:
+    type: mmlu
+    data_file: data/benchmarks/mmlu_20.jsonl
+    schedule: every_epoch
+    cot: false
+  mmlu_500_cot:
+    type: mmlu
+    data_file: data/benchmarks/mmlu_500.jsonl
+    schedule: end_only
+    cot: true
+  mmlu_500:
+    type: mmlu
+    data_file: data/benchmarks/mmlu_500.jsonl
+    schedule: end_only
+    cot: false

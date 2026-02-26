@@ -37,9 +37,9 @@ def main():
     parser.add_argument("--group", default=None, help="Group subdirectory for run (e.g. sweep_lr)")
     parser.add_argument(
         "--exists",
-        default="error",
-        choices=["error", "skip", "overwrite"],
-        help="Policy when a run already exists (default: error)",
+        default="new",
+        choices=["new", "error", "skip", "overwrite"],
+        help="Policy when a run already exists (default: new = always create fresh dir)",
     )
     parser.add_argument(
         "--resume_from_checkpoint", default=None, help="Path to checkpoint to resume from"

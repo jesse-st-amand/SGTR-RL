@@ -107,25 +107,24 @@ def create_run_dir(
     run_dir = base / run_name
 
     # Check for existing runs with the same experiment_name in this group
-    existing = _find_existing_run(base, config.experiment_name)
-    if existing:
-        if exists == "error":
-            raise FileExistsError(
-                f"Run directory already exists for experiment "
-                f"'{config.experiment_name}' in {base}: {existing}. "
-                f"Use --exists=skip or --exists=overwrite."
-            )
-        elif exists == "skip":
-            config.run_dir = str(existing)
-            return existing
-        elif exists == "overwrite":
-            shutil.rmtree(existing)
+    if exists != "new":
+        existing = _find_existing_run(base, config.experiment_name)
+        if existing:
+            if exists == "error":
+                raise FileExistsError(
+                    f"Run directory already exists for experiment "
+                    f"'{config.experiment_name}' in {base}: {existing}. "
+                    f"Use --exists=new, --exists=skip, or --exists=overwrite."
+                )
+            elif exists == "skip":
+                config.run_dir = str(existing)
+                return existing
+            elif exists == "overwrite":
+                shutil.rmtree(existing)
 
     # Create directory structure
     run_dir.mkdir(parents=True, exist_ok=True)
     (run_dir / "checkpoints").mkdir()
-    (run_dir / "eval").mkdir()
-    (run_dir / "tensorboard").mkdir()
 
     # Freeze config
     yaml_path = Path(yaml_path)

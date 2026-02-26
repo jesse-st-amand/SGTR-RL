@@ -41,6 +41,8 @@ SGTR-RL/
 | `train_config.py` | `TrainingConfig` dataclass + `load_training_config()` YAML parser. All hyperparameters flow through here. |
 | `reward.py` | `sgtr_binary_reward()` — extracts "1" or "2" from model output, returns 1.0 if correct, 0.0 otherwise. `_extract_answer()` handles both bare digits and "Answer: N" patterns. |
 | `run_dir.py` | Creates structured run directories under `results/`. Handles run naming, config freezing, and existing-run policies. |
+| `plot_summary.py` | `generate_summary_plot()` — generates a 3-subplot summary figure (loss, accuracy, benchmarks) from `metrics/metrics.jsonl`. Auto-called at end of training. |
+| `benchmark_eval.py` | MMLU benchmark evaluation during training. |
 | `logging_setup.py` | Dual logging to terminal + file. |
 
 ### `sgtr_rl/scripts/` — CLI Entry Points
@@ -53,6 +55,7 @@ SGTR-RL/
 | `eval_baseline.py` | Evaluate base model accuracy on any JSONL dataset via Tinker | `python sgtr_rl/scripts/eval_baseline.py --data data/training_data/sharegpt_ind_cot/val.jsonl` |
 | `evaluate.py` | Run eval tasks from experiment config on a trained checkpoint | `python -m sgtr_rl.scripts.evaluate --checkpoint path/to/ckpt --config experiments/.../config.yaml` |
 | `dry_run.py` | Simulate training locally (no GPU/API) to validate reward/advantage logic | `python sgtr_rl/scripts/dry_run.py --config experiments/.../config.yaml` |
+| `prepare_mmlu.py` | Download MMLU from HuggingFace and prepare 20-sample + 500-sample benchmark JSONL files | `python -m sgtr_rl.scripts.prepare_mmlu` |
 
 ### `sgtr_rl/data_processing/` — Data Preparation
 
@@ -122,10 +125,11 @@ results/{experiment_name}__{overrides}__{timestamp}/
 ├── config.yaml          # Frozen config (including CLI overrides)
 ├── extraction_meta.json # Data extraction metadata
 ├── train.log            # Full training log
+├── summary.png          # Auto-generated 3-subplot summary figure
 ├── metrics/             # W&B and JSON metric logs
 ├── val_predictions/     # Per-epoch val predictions (epoch_0.json, epoch_1.json, ...)
-├── checkpoints/         # Saved model checkpoints
-└── eval/                # Evaluation results
+├── benchmark_predictions/ # Per-epoch benchmark predictions
+└── checkpoints/         # Saved model checkpoints
 ```
 
 View with: W&B dashboard (project configured via `wandb_project` in config)
@@ -310,4 +314,4 @@ checkpointing:
 - `PROJECT_SETUP.md` and `SETUP_COMPLETE.md` are stale planning documents from early project phases
 - `config/paths.py` has helper functions (`get_checkpoints_path()`, etc.) that aren't used by the current training pipeline
 - `data/README.md` references DPO-era terminology and paths
-- **Small dataset**: Current PW dataset is 100 unique pairs (200 records). Results are promising (90% val accuracy with SFT) but more data would improve robustness
+- **Small dataset**: Current PW dataset is 100 unique pairs (200 records). Results are promising (97.5% val accuracy with SFT after 20 epochs) but more data would improve robustness

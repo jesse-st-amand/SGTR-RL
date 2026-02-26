@@ -152,6 +152,8 @@ data/
 # Keep directory structure but ignore contents
 !data/.gitkeep
 !data/README.md
+!data/benchmarks/
+!data/benchmarks/**
 
 # PDF files (anonymous submissions)
 *.pdf

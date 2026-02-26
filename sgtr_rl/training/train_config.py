@@ -7,6 +7,18 @@ import yaml
 
 
 @dataclass
+class BenchmarkEvalConfig:
+    """Configuration for a single benchmark evaluation."""
+
+    name: str = ""
+    type: str = "mmlu"  # benchmark type
+    data_file: str = ""
+    schedule: str = "every_epoch"  # "every_epoch" | "every_N_epochs" | "end_only"
+    frequency: int = 1  # for "every_N_epochs"
+    cot: bool = False
+
+
+@dataclass
 class TrainingConfig:
     """Configuration for SGTR-RL training runs."""
 
@@ -52,6 +64,9 @@ class TrainingConfig:
     save_steps: int = 50  # checkpoint every N steps
     eval_steps: int = 50  # run evals every N steps
 
+    # Benchmark evaluations (e.g. MMLU canary)
+    benchmark_evals: list[BenchmarkEvalConfig] = field(default_factory=list)
+
 
 def load_training_config(yaml_path: str | Path) -> TrainingConfig:
     """Load a TrainingConfig from an experiment YAML file.
@@ -75,6 +90,20 @@ def load_training_config(yaml_path: str | Path) -> TrainingConfig:
     hp = cfg.get("hyperparameters", {})
     data_cfg = cfg.get("data", {})
     ckpt_cfg = cfg.get("checkpointing", {})
+
+    # Parse benchmark_evals section
+    bench_cfg = cfg.get("benchmark_evals", {})
+    benchmark_evals = []
+    if bench_cfg:
+        for name, bcfg in bench_cfg.items():
+            benchmark_evals.append(BenchmarkEvalConfig(
+                name=name,
+                type=bcfg.get("type", "mmlu"),
+                data_file=bcfg.get("data_file", ""),
+                schedule=bcfg.get("schedule", "every_epoch"),
+                frequency=bcfg.get("frequency", 1),
+                cot=bcfg.get("cot", False),
+            ))
 
     return TrainingConfig(
         algorithm=cfg.get("algorithm", "grpo"),
@@ -106,4 +135,6 @@ def load_training_config(yaml_path: str | Path) -> TrainingConfig:
         # Checkpointing
         save_steps=ckpt_cfg.get("save_steps", 50),
         eval_steps=ckpt_cfg.get("eval_steps", 50),
+        # Benchmarks
+        benchmark_evals=benchmark_evals,
     )

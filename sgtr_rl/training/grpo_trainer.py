@@ -8,6 +8,7 @@ from pathlib import Path
 from sgtr_rl.training.train_config import TrainingConfig
 from sgtr_rl.training.reward import sgtr_binary_reward, _extract_answer
 from sgtr_rl.training.eval import run_val_eval
+from sgtr_rl.training.benchmark_eval import run_benchmark_evals
 from sgtr_rl.data_processing.validate_data import validate_training_data
 
 logger = logging.getLogger(__name__)
@@ -303,6 +304,11 @@ class TinkerRLTrainer:
             val_prompts, training_client, renderer, eval_params,
             ml_logger, step=0, epoch=0, run_dir=cfg.run_dir,
         )
+        run_benchmark_evals(
+            cfg.benchmark_evals, training_client, renderer, eval_params,
+            ml_logger, step=0, epoch=0, total_epochs=n_epochs,
+            run_dir=cfg.run_dir,
+        )
 
         for epoch in range(n_epochs):
             epoch_rewards: list[float] = []
@@ -497,6 +503,11 @@ class TinkerRLTrainer:
             run_val_eval(
                 val_prompts, training_client, renderer, eval_params,
                 ml_logger, step=global_step, epoch=epoch + 1, run_dir=cfg.run_dir,
+            )
+            run_benchmark_evals(
+                cfg.benchmark_evals, training_client, renderer, eval_params,
+                ml_logger, step=global_step, epoch=epoch + 1,
+                total_epochs=n_epochs, run_dir=cfg.run_dir,
             )
 
         ml_logger.close()

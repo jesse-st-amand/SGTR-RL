@@ -9,6 +9,8 @@ from pathlib import Path
 
 from sgtr_rl.training.train_config import TrainingConfig
 from sgtr_rl.training.eval import run_val_eval
+from sgtr_rl.training.benchmark_eval import run_benchmark_evals
+from sgtr_rl.training.plot_summary import generate_summary_plot
 from sgtr_rl.data_processing.validate_data import validate_training_data
 
 logger = logging.getLogger(__name__)
@@ -145,6 +147,11 @@ class TinkerSFTTrainer:
             val_prompts, training_client, renderer, eval_params,
             ml_logger, step=0, epoch=0, run_dir=cfg.run_dir,
         )
+        run_benchmark_evals(
+            cfg.benchmark_evals, training_client, renderer, eval_params,
+            ml_logger, step=0, epoch=0, total_epochs=n_epochs,
+            run_dir=cfg.run_dir,
+        )
 
         for epoch in range(n_epochs):
             # Shuffle prompts each epoch
@@ -217,8 +224,19 @@ class TinkerSFTTrainer:
                 val_prompts, training_client, renderer, eval_params,
                 ml_logger, step=global_step, epoch=epoch + 1, run_dir=cfg.run_dir,
             )
+            run_benchmark_evals(
+                cfg.benchmark_evals, training_client, renderer, eval_params,
+                ml_logger, step=global_step, epoch=epoch + 1,
+                total_epochs=n_epochs, run_dir=cfg.run_dir,
+            )
 
         ml_logger.close()
+
+        # Generate summary plot
+        try:
+            generate_summary_plot(cfg.run_dir)
+        except Exception:
+            logger.warning("Failed to generate summary plot", exc_info=True)
 
         # Save final checkpoint
         checkpoint_utils.save_checkpoint(
