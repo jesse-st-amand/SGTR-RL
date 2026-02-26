@@ -246,6 +246,28 @@ uv run ruff check .        # Lint
 uv run ruff format .       # Format
 ```
 
+### Testing
+
+```bash
+uv run pytest                # Run all tests
+uv run pytest -m datasci     # Data integrity tests only
+uv run pytest --co           # Dry-run: confirm test discovery
+```
+
+Tests live in `tests/` and cover:
+
+| File | What it tests |
+|------|--------------|
+| `test_validate_data.py` | Data validation — UUID leakage, schema, targets, PW ordering |
+| `test_reward.py` | Answer extraction and binary reward |
+| `test_benchmark_eval.py` | MMLU prompt formatting, answer extraction, schedule logic |
+| `test_run_dir.py` | Run naming, override computation, directory creation |
+| `test_train_config.py` | YAML config loading and defaults |
+| `test_plot_summary.py` | Title building, smoothing, summary plot generation |
+| `test_data_integrity.py` | Validates actual data files on disk (marked `@datasci`) |
+
+When modifying data processing, validation, or reward logic, add or update corresponding tests. Data integrity tests (`@datasci`) should be updated when data formats or splits change.
+
 ### Branch
 
 Working branch: check `git branch` (development has been on feature branches off `main`).

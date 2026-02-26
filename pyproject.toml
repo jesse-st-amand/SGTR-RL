@@ -31,6 +31,12 @@ dependencies = [
 [tool.setuptools]
 packages = {find = {where = ["."], include = ["sgtr_rl*"], exclude = ["_external*", "*.egg-info", "build", "dist", "tests*"]}}
 
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = [
+    "datasci: guards against data leakage, label errors, and silent science bugs",
+]
+
 [tool.ruff]
 line-length = 100
 target-version = "py312"
