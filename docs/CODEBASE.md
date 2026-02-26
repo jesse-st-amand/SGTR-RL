@@ -42,7 +42,7 @@ SGTR-RL/
 | `reward.py` | `sgtr_binary_reward()` — extracts "1" or "2" from model output, returns 1.0 if correct, 0.0 otherwise. `_extract_answer()` handles both bare digits and "Answer: N" patterns. |
 | `run_dir.py` | Creates structured run directories under `results/`. Handles run naming, config freezing, and existing-run policies. |
 | `plot_summary.py` | `generate_summary_plot()` — generates a 3-subplot summary figure (loss, accuracy, benchmarks) from `metrics/metrics.jsonl`. Auto-called at end of training. |
-| `benchmark_eval.py` | MMLU benchmark evaluation during training. |
+| `benchmark_eval.py` | Benchmark evaluation during training (MMLU and SGTR cross-eval). Supports `type: mmlu` and `type: sgtr`, runtime label flipping (`flip_targets`), and deterministic subsampling (`num_samples`). |
 | `logging_setup.py` | Dual logging to terminal + file. |
 
 ### `sgtr_rl/scripts/` — CLI Entry Points
@@ -56,6 +56,7 @@ SGTR-RL/
 | `evaluate.py` | Run eval tasks from experiment config on a trained checkpoint | `python -m sgtr_rl.scripts.evaluate --checkpoint path/to/ckpt --config experiments/.../config.yaml` |
 | `dry_run.py` | Simulate training locally (no GPU/API) to validate reward/advantage logic | `python sgtr_rl/scripts/dry_run.py --config experiments/.../config.yaml` |
 | `prepare_mmlu.py` | Download MMLU from HuggingFace and prepare 20-sample + 500-sample benchmark JSONL files | `python -m sgtr_rl.scripts.prepare_mmlu` |
+| `download_hf_data.py` | Download SGTR eval results from HuggingFace, reorganize, and optionally extract training JSONL | `python -m sgtr_rl.scripts.download_hf_data --evaluator ll-3.1-8b --dataset sharegpt --name llama8b --extract` |
 
 ### `sgtr_rl/data_processing/` — Data Preparation
 
@@ -317,7 +318,27 @@ hyperparameters:
 checkpointing:
   save_steps: 20
   eval_steps: 20
+
+benchmark_evals:                     # Optional: run during training at epoch boundaries
+  mmlu_canary:
+    type: mmlu                       # "mmlu" | "sgtr"
+    data_file: data/benchmarks/mmlu_500.jsonl
+    num_samples: 20                  # Deterministic subsample (omit for all)
+    schedule: every_epoch
+  cross_ind_val:
+    type: sgtr                       # Evaluate any SGTR JSONL as a benchmark
+    data_file: data/training_data/sharegpt_ind/val.jsonl
+    schedule: every_epoch
+    flip_targets: false              # Swap "1"<->"2" at eval time
 ```
+
+#### Cross-Eval and Label Flipping
+
+`flip_targets` swaps target labels "1" and "2" at runtime without duplicating data files:
+- In `data:` section: flips training and validation targets (for anti-self experiments)
+- In `benchmark_evals:`: flips comparison targets at eval time
+
+`num_samples` subsamples benchmark data deterministically (seed=42), replacing the need for separate mmlu_20/mmlu_500 files. Set to `null` or omit to use all data.
 
 ## Key Dependencies
 

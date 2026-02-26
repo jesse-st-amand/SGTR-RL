@@ -1,4 +1,4 @@
-"""Benchmark evaluation (MMLU) during training.
+"""Benchmark evaluation (MMLU and SGTR) during training.
 
 Provides configurable benchmark evals that run alongside the existing
 validation eval loop. Mirrors patterns from eval.py.
@@ -6,6 +6,7 @@ validation eval loop. Mirrors patterns from eval.py.
 
 import json
 import logging
+import random
 import re
 from pathlib import Path
 
@@ -13,6 +14,19 @@ logger = logging.getLogger(__name__)
 
 # Module-level cache: data_file path -> list of items
 _benchmark_cache: dict[str, list[dict]] = {}
+
+
+def _flip_target(target: str) -> str:
+    """Swap "1"<->"2" for label-flipping experiments."""
+    return {"1": "2", "2": "1"}.get(target, target)
+
+
+def _subsample(data: list[dict], num_samples: int | None, seed: int = 42) -> list[dict]:
+    """Deterministically subsample data. Returns all data if num_samples is None or >= len."""
+    if num_samples is None or num_samples >= len(data):
+        return data
+    rng = random.Random(seed)
+    return rng.sample(data, num_samples)
 
 
 def load_benchmark_data(path: str) -> list[dict]:
@@ -167,6 +181,93 @@ def evaluate_benchmark(
     }
 
 
+def evaluate_sgtr_benchmark(
+    data: list[dict],
+    sampling_client,
+    renderer,
+    eval_params,
+    flip_targets: bool = False,
+) -> dict:
+    """Run SGTR benchmark evaluation on loaded data.
+
+    Like evaluate_val() from eval.py but designed for cross-eval: prompts are
+    pre-built in JSONL, accuracy is grouped by metadata.format, and
+    flip_targets swaps the comparison target at eval time.
+
+    Returns:
+        Dict with accuracy, correct, total, per-format breakdown,
+        answer distribution, and per-item predictions.
+    """
+    from sgtr_rl.training.reward import _extract_answer
+    from tinker_cookbook import renderers as r
+
+    # Fire all requests
+    futures = []
+    for item in data:
+        convo = [{"role": "user", "content": item["prompt"]}]
+        model_input = renderer.build_generation_prompt(convo)
+        future = sampling_client.sample(
+            prompt=model_input, num_samples=1, sampling_params=eval_params,
+        )
+        futures.append(future)
+
+    # Collect results
+    correct = 0
+    answers = {"1": 0, "2": 0, "other": 0}
+    format_correct: dict[str, int] = {}
+    format_total: dict[str, int] = {}
+    predictions = []
+
+    for future, item in zip(futures, data):
+        result = future.result()
+        sequence = result.sequences[0]
+        parsed_msg, _ = renderer.parse_response(sequence.tokens)
+        content = r.get_text_content(parsed_msg)
+        answer = _extract_answer(content)
+        target = item["target"]
+        if flip_targets:
+            target = _flip_target(target)
+        fmt = item.get("metadata", {}).get("format", "unknown")
+
+        is_correct = answer == target
+        if is_correct:
+            correct += 1
+
+        if answer in ("1", "2"):
+            answers[answer] += 1
+        else:
+            answers["other"] += 1
+
+        format_correct[fmt] = format_correct.get(fmt, 0) + int(is_correct)
+        format_total[fmt] = format_total.get(fmt, 0) + 1
+
+        predictions.append({
+            "prompt": item["prompt"][:200],
+            "format": fmt,
+            "prediction": answer,
+            "target": target,
+            "correct": is_correct,
+            "completion": content[:500],
+        })
+
+    total = len(data)
+    accuracy = correct / total if total else 0.0
+
+    format_accuracy = {
+        f: format_correct[f] / format_total[f]
+        for f in sorted(format_total)
+    }
+
+    return {
+        "accuracy": accuracy,
+        "correct": correct,
+        "total": total,
+        "answers": answers,
+        "format_accuracy": format_accuracy,
+        "predictions": predictions,
+    }
+
+
 def should_run_benchmark(schedule: str, frequency: int, epoch: int, total_epochs: int) -> bool:
     """Check if a benchmark should run at this epoch.
 
@@ -187,12 +288,13 @@ def should_run_benchmark(schedule: str, frequency: int, epoch: int, total_epochs
 
     if schedule == "every_epoch":
         return True
-    elif schedule == "every_N_epochs":
+    elif schedule == "end_only":
+        return is_final
+    elif schedule.startswith("every_") and schedule.endswith("_epochs"):
+        # Matches "every_N_epochs", "every_5_epochs", etc.
         if epoch == 0:
             return False
         return (epoch % frequency == 0) or is_final
-    elif schedule == "end_only":
-        return is_final
     else:
         logger.warning(f"Unknown benchmark schedule: {schedule!r}")
         return False
@@ -239,46 +341,93 @@ def run_benchmark_evals(
     sampling_client = training_client.save_weights_and_get_sampling_client()
 
     for cfg in due:
-        logger.info(f"Running benchmark eval: {cfg.name} (epoch={epoch}, cot={cfg.cot})")
+        logger.info(f"Running benchmark eval: {cfg.name} (type={cfg.type}, epoch={epoch})")
 
         data = load_benchmark_data(cfg.data_file)
-        result = evaluate_benchmark(
-            data, sampling_client, renderer, eval_params, cot=cfg.cot,
-        )
+        data = _subsample(data, cfg.num_samples)
 
-        # Log to console
-        total = max(result["total"], 1)
-        logger.info(
-            f"  benchmark/{cfg.name}: {result['correct']}/{result['total']} "
-            f"= {result['accuracy']:.1%} | "
-            f"answers={{A:{result['answers']['A']},B:{result['answers']['B']},"
-            f"C:{result['answers']['C']},D:{result['answers']['D']},"
-            f"?:{result['answers']['other']}}}"
-        )
+        if cfg.type == "sgtr":
+            result = evaluate_sgtr_benchmark(
+                data, sampling_client, renderer, eval_params,
+                flip_targets=cfg.flip_targets,
+            )
 
-        # Log to wandb
-        metrics = {
-            f"benchmark/{cfg.name}/accuracy": result["accuracy"],
-            f"benchmark/{cfg.name}/answers_A_pct": result["answers"]["A"] / total,
-            f"benchmark/{cfg.name}/answers_B_pct": result["answers"]["B"] / total,
-            f"benchmark/{cfg.name}/answers_C_pct": result["answers"]["C"] / total,
-            f"benchmark/{cfg.name}/answers_D_pct": result["answers"]["D"] / total,
-            f"benchmark/{cfg.name}/answers_other_pct": result["answers"]["other"] / total,
-        }
-        ml_logger.log_metrics(metrics, step=step)
+            # Log to console (1/2 distribution)
+            total = max(result["total"], 1)
+            logger.info(
+                f"  benchmark/{cfg.name}: {result['correct']}/{result['total']} "
+                f"= {result['accuracy']:.1%} | "
+                f"answers={{1:{result['answers']['1']},"
+                f"2:{result['answers']['2']},"
+                f"?:{result['answers']['other']}}}"
+            )
 
-        # Save predictions
-        if run_dir:
-            pred_dir = Path(run_dir) / "benchmark_predictions" / cfg.name
-            pred_dir.mkdir(parents=True, exist_ok=True)
-            pred_path = pred_dir / f"epoch_{epoch}.json"
-            with open(pred_path, "w") as f:
-                json.dump({
-                    "epoch": epoch,
-                    "name": cfg.name,
-                    "cot": cfg.cot,
-                    "accuracy": result["accuracy"],
-                    "subject_accuracy": result["subject_accuracy"],
-                    "predictions": result["predictions"],
-                }, f, indent=2)
-            logger.debug(f"  benchmark predictions saved to {pred_path}")
+            # Log to wandb
+            metrics = {
+                f"benchmark/{cfg.name}/accuracy": result["accuracy"],
+                f"benchmark/{cfg.name}/answers_1_pct": result["answers"]["1"] / total,
+                f"benchmark/{cfg.name}/answers_2_pct": result["answers"]["2"] / total,
+                f"benchmark/{cfg.name}/answers_other_pct": result["answers"]["other"] / total,
+            }
+            ml_logger.log_metrics(metrics, step=step)
+
+            # Save predictions
+            if run_dir:
+                pred_dir = Path(run_dir) / "benchmark_predictions" / cfg.name
+                pred_dir.mkdir(parents=True, exist_ok=True)
+                pred_path = pred_dir / f"epoch_{epoch}.json"
+                with open(pred_path, "w") as f:
+                    json.dump({
+                        "epoch": epoch,
+                        "name": cfg.name,
+                        "type": cfg.type,
+                        "flip_targets": cfg.flip_targets,
+                        "accuracy": result["accuracy"],
+                        "format_accuracy": result.get("format_accuracy", {}),
+                        "predictions": result["predictions"],
+                    }, f, indent=2)
+                logger.debug(f"  benchmark predictions saved to {pred_path}")
+
+        else:
+            # MMLU (default)
+            result = evaluate_benchmark(
+                data, sampling_client, renderer, eval_params, cot=cfg.cot,
+            )
+
+            # Log to console (A/B/C/D distribution)
+            total = max(result["total"], 1)
+            logger.info(
+                f"  benchmark/{cfg.name}: {result['correct']}/{result['total']} "
+                f"= {result['accuracy']:.1%} | "
+                f"answers={{A:{result['answers']['A']},B:{result['answers']['B']},"
+                f"C:{result['answers']['C']},D:{result['answers']['D']},"
+                f"?:{result['answers']['other']}}}"
+            )
+
+            # Log to wandb
+            metrics = {
+                f"benchmark/{cfg.name}/accuracy": result["accuracy"],
+                f"benchmark/{cfg.name}/answers_A_pct": result["answers"]["A"] / total,
+                f"benchmark/{cfg.name}/answers_B_pct": result["answers"]["B"] / total,
+                f"benchmark/{cfg.name}/answers_C_pct": result["answers"]["C"] / total,
+                f"benchmark/{cfg.name}/answers_D_pct": result["answers"]["D"] / total,
+                f"benchmark/{cfg.name}/answers_other_pct": result["answers"]["other"] / total,
+            }
+            ml_logger.log_metrics(metrics, step=step)
+
+            # Save predictions
+            if run_dir:
+                pred_dir = Path(run_dir) / "benchmark_predictions" / cfg.name
+                pred_dir.mkdir(parents=True, exist_ok=True)
+                pred_path = pred_dir / f"epoch_{epoch}.json"
+                with open(pred_path, "w") as f:
+                    json.dump({
+                        "epoch": epoch,
+                        "name": cfg.name,
+                        "type": cfg.type,
+                        "cot": cfg.cot,
+                        "accuracy": result["accuracy"],
+                        "subject_accuracy": result.get("subject_accuracy", {}),
+                        "predictions": result["predictions"],
+                    }, f, indent=2)
+                logger.debug(f"  benchmark predictions saved to {pred_path}")

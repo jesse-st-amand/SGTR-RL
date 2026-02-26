@@ -53,19 +53,26 @@ def validate_training_data(train_path: str, val_path: str) -> dict:
             f"Examples: {list(overlap)[:3]}"
         )
 
-    # PW format: check each UUID has exactly 2 records (both orderings)
+    # PW format: check each (uuid, treatment_pair) has exactly 2 records (both orderings)
     fmt = _detect_format(train_records)
     if fmt == "pw":
         for label, records in [("train", train_records), ("val", val_records)]:
-            uuid_counts = defaultdict(int)
+            pair_counts = defaultdict(int)
             for rec in records:
-                uuid_counts[rec["metadata"]["uuid"]] += 1
-            bad_uuids = {u: c for u, c in uuid_counts.items() if c != 2}
-            if bad_uuids:
-                examples = list(bad_uuids.items())[:3]
+                meta = rec["metadata"]
+                uuid = meta["uuid"]
+                # Canonical pair key: sorted treatment names
+                t1 = meta.get("treatment_name_1", "")
+                t2 = meta.get("treatment_name_2", "")
+                pair_key = (uuid, tuple(sorted([t1, t2])))
+                pair_counts[pair_key] += 1
+            bad_pairs = {k: c for k, c in pair_counts.items() if c != 2}
+            if bad_pairs:
+                examples = list(bad_pairs.items())[:3]
                 raise ValueError(
-                    f"{label}: {len(bad_uuids)} UUIDs don't have exactly 2 records "
-                    f"(both orderings required for PW format). Examples: {examples}"
+                    f"{label}: {len(bad_pairs)} (uuid, treatment_pair) groups don't have "
+                    f"exactly 2 records (both orderings required for PW format). "
+                    f"Examples: {examples}"
                 )
 
     # Build summary

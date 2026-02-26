@@ -103,6 +103,66 @@ class TestLoadTrainingConfig:
         assert cot_bench.cot is True
         assert cot_bench.schedule == "end_only"
 
+    def test_load_with_sgtr_benchmarks(self, tmp_path):
+        config = {
+            "experiment_name": "sgtr_bench_test",
+            "benchmark_evals": {
+                "cross_ind_val": {
+                    "type": "sgtr",
+                    "data_file": "data/training_data/sharegpt_ind/val.jsonl",
+                    "schedule": "every_epoch",
+                    "flip_targets": True,
+                    "num_samples": 50,
+                },
+                "mmlu_canary": {
+                    "type": "mmlu",
+                    "data_file": "data/benchmarks/mmlu_500.jsonl",
+                    "num_samples": 20,
+                },
+            },
+        }
+        path = tmp_path / "config.yaml"
+        with open(path, "w") as f:
+            yaml.dump(config, f)
+
+        cfg = load_training_config(str(path))
+        assert len(cfg.benchmark_evals) == 2
+
+        sgtr_bench = next(b for b in cfg.benchmark_evals if b.name == "cross_ind_val")
+        assert sgtr_bench.type == "sgtr"
+        assert sgtr_bench.flip_targets is True
+        assert sgtr_bench.num_samples == 50
+
+        mmlu_bench = next(b for b in cfg.benchmark_evals if b.name == "mmlu_canary")
+        assert mmlu_bench.type == "mmlu"
+        assert mmlu_bench.flip_targets is False
+        assert mmlu_bench.num_samples == 20
+
+    def test_load_flip_targets_training(self, tmp_path):
+        config = {
+            "experiment_name": "flip_test",
+            "data": {
+                "train_file": "train.jsonl",
+                "val_file": "val.jsonl",
+                "flip_targets": True,
+            },
+        }
+        path = tmp_path / "config.yaml"
+        with open(path, "w") as f:
+            yaml.dump(config, f)
+
+        cfg = load_training_config(str(path))
+        assert cfg.flip_targets is True
+
+    def test_flip_targets_defaults_false(self, tmp_path):
+        config = {"experiment_name": "no_flip"}
+        path = tmp_path / "config.yaml"
+        with open(path, "w") as f:
+            yaml.dump(config, f)
+
+        cfg = load_training_config(str(path))
+        assert cfg.flip_targets is False
+
     def test_load_missing_file_raises(self, tmp_path):
         with pytest.raises(FileNotFoundError):
             load_training_config(str(tmp_path / "nonexistent.yaml"))

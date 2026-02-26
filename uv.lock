@@ -4064,6 +4064,7 @@ version = "0.1.0"
 source = { editable = "." }
 dependencies = [
     { name = "accelerate" },
+    { name = "huggingface-hub" },
     { name = "inspect-ai" },
     { name = "ipykernel" },
     { name = "matplotlib" },
@@ -4085,6 +4086,7 @@ dependencies = [
 [package.metadata]
 requires-dist = [
     { name = "accelerate", specifier = ">=1.0" },
+    { name = "huggingface-hub", specifier = ">=0.20" },
     { name = "inspect-ai", specifier = ">=0.3.0" },
     { name = "ipykernel", specifier = ">=6.0" },
     { name = "matplotlib", specifier = ">=3.8" },

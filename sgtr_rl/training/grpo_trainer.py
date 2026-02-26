@@ -8,7 +8,7 @@ from pathlib import Path
 from sgtr_rl.training.train_config import TrainingConfig
 from sgtr_rl.training.reward import sgtr_binary_reward, _extract_answer
 from sgtr_rl.training.eval import run_val_eval
-from sgtr_rl.training.benchmark_eval import run_benchmark_evals
+from sgtr_rl.training.benchmark_eval import run_benchmark_evals, _flip_target
 from sgtr_rl.data_processing.validate_data import validate_training_data
 
 logger = logging.getLogger(__name__)
@@ -156,6 +156,10 @@ class TinkerRLTrainer:
         with open(self.config.train_file, "r") as f:
             for line in f:
                 prompts.append(json.loads(line))
+        if self.config.flip_targets:
+            for item in prompts:
+                item["target"] = _flip_target(item["target"])
+            logger.info("Applied flip_targets to training data")
         logger.info(f"Loaded {len(prompts)} training prompts")
         return prompts
 
@@ -203,6 +207,10 @@ class TinkerRLTrainer:
             for line in f:
                 if line.strip():
                     prompts.append(json.loads(line))
+        if self.config.flip_targets:
+            for item in prompts:
+                item["target"] = _flip_target(item["target"])
+            logger.info("Applied flip_targets to validation data")
         logger.info(f"Loaded {len(prompts)} validation prompts")
         return prompts
 

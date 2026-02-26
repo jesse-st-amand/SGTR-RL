@@ -31,6 +31,10 @@ _BENCH_DISPLAY = {
     "mmlu_canary": "MMLU (20-sample)",
     "mmlu_full_nocot": "MMLU (500-sample)",
     "mmlu_full_cot": "MMLU (500-sample, CoT)",
+    # SGTR cross-eval benchmarks
+    "cross_ind_val": "SGTR IND (cross-eval)",
+    "cross_ind_val_cot": "SGTR IND CoT (cross-eval)",
+    "cross_pw_val": "SGTR PW (cross-eval)",
 }
 
 # Default hyperparams (only show overrides in title)

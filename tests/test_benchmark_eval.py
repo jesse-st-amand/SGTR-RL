@@ -3,6 +3,8 @@
 import pytest
 
 from sgtr_rl.training.benchmark_eval import (
+    _flip_target,
+    _subsample,
     extract_mmlu_answer,
     format_mmlu_prompt,
     should_run_benchmark,
@@ -69,6 +71,61 @@ class TestExtractMMLUAnswer:
 # should_run_benchmark
 # ---------------------------------------------------------------------------
 
+# ---------------------------------------------------------------------------
+# _flip_target
+# ---------------------------------------------------------------------------
+
+class TestFlipTarget:
+    def test_flip_target_1_to_2(self):
+        assert _flip_target("1") == "2"
+
+    def test_flip_target_2_to_1(self):
+        assert _flip_target("2") == "1"
+
+    def test_flip_target_other_unchanged(self):
+        assert _flip_target("A") == "A"
+        assert _flip_target("") == ""
+        assert _flip_target("3") == "3"
+
+
+# ---------------------------------------------------------------------------
+# _subsample
+# ---------------------------------------------------------------------------
+
+class TestSubsample:
+    def test_subsample_returns_subset(self):
+        data = [{"id": i} for i in range(100)]
+        result = _subsample(data, 10)
+        assert len(result) == 10
+        assert all(item in data for item in result)
+
+    def test_subsample_none_returns_all(self):
+        data = [{"id": i} for i in range(10)]
+        result = _subsample(data, None)
+        assert result is data
+
+    def test_subsample_exceeds_data(self):
+        data = [{"id": i} for i in range(5)]
+        result = _subsample(data, 100)
+        assert result is data
+
+    def test_subsample_deterministic(self):
+        data = [{"id": i} for i in range(100)]
+        r1 = _subsample(data, 10, seed=42)
+        r2 = _subsample(data, 10, seed=42)
+        assert r1 == r2
+
+    def test_subsample_different_seeds_differ(self):
+        data = [{"id": i} for i in range(100)]
+        r1 = _subsample(data, 10, seed=42)
+        r2 = _subsample(data, 10, seed=99)
+        assert r1 != r2
+
+
+# ---------------------------------------------------------------------------
+# should_run_benchmark
+# ---------------------------------------------------------------------------
+
 class TestShouldRunBenchmark:
     def test_should_run_baseline_always(self):
         """epoch=0 (baseline) should always return True regardless of schedule."""
@@ -88,6 +145,14 @@ class TestShouldRunBenchmark:
         # Should NOT run at epoch 2, 4, 5
         assert should_run_benchmark("every_N_epochs", 3, epoch=2, total_epochs=10) is False
         assert should_run_benchmark("every_N_epochs", 3, epoch=4, total_epochs=10) is False
+
+    def test_should_run_every_5_epochs_literal(self):
+        # Config files use "every_5_epochs" not "every_N_epochs"
+        assert should_run_benchmark("every_5_epochs", 5, epoch=5, total_epochs=20) is True
+        assert should_run_benchmark("every_5_epochs", 5, epoch=10, total_epochs=20) is True
+        assert should_run_benchmark("every_5_epochs", 5, epoch=20, total_epochs=20) is True
+        assert should_run_benchmark("every_5_epochs", 5, epoch=3, total_epochs=20) is False
+        assert should_run_benchmark("every_5_epochs", 5, epoch=7, total_epochs=20) is False
 
     def test_should_run_end_only(self):
         assert should_run_benchmark("end_only", 1, epoch=5, total_epochs=10) is False

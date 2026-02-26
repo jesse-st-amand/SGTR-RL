@@ -11,11 +11,13 @@ class BenchmarkEvalConfig:
     """Configuration for a single benchmark evaluation."""
 
     name: str = ""
-    type: str = "mmlu"  # benchmark type
+    type: str = "mmlu"  # "mmlu" | "sgtr"
     data_file: str = ""
     schedule: str = "every_epoch"  # "every_epoch" | "every_N_epochs" | "end_only"
     frequency: int = 1  # for "every_N_epochs"
     cot: bool = False
+    flip_targets: bool = False  # swap "1"<->"2" at eval time
+    num_samples: int | None = None  # deterministic subsample size (None = use all)
 
 
 @dataclass
@@ -53,6 +55,7 @@ class TrainingConfig:
     train_file: str = ""
     val_file: str = ""
     output_dir: str = ""
+    flip_targets: bool = False  # swap "1"<->"2" in training/val data at load time
 
     # Run directory (set by run_dir.create_run_dir)
     run_dir: str = ""
@@ -103,6 +106,8 @@ def load_training_config(yaml_path: str | Path) -> TrainingConfig:
                 schedule=bcfg.get("schedule", "every_epoch"),
                 frequency=bcfg.get("frequency", 1),
                 cot=bcfg.get("cot", False),
+                flip_targets=bcfg.get("flip_targets", False),
+                num_samples=bcfg.get("num_samples"),
             ))
 
     return TrainingConfig(
@@ -130,6 +135,7 @@ def load_training_config(yaml_path: str | Path) -> TrainingConfig:
         # Data
         train_file=data_cfg.get("train_file", ""),
         val_file=data_cfg.get("val_file", ""),
+        flip_targets=data_cfg.get("flip_targets", False),
         # Logging
         wandb_project=cfg.get("wandb_project"),
         # Checkpointing
