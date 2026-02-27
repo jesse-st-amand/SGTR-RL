@@ -1,0 +1,51 @@
+experiment_name: "01_RL_grpo_IND_WikiSum"
+description: "GRPO on IND recognition, WikiSum, ll-3.1-8b vs qwen-2.5-7b"
+
+algorithm: grpo
+backend: local
+
+data:
+  evaluator_model: ll-3.1-8b
+  generator_models: [ll-3.1-8b, qwen-2.5-7b]
+  dataset: wikisum
+  subset: test_set_1-30
+  sgtr_experiment_config: experiments/ICML_02_UT_IND-Q_Rec_NPr_FA_Inst/config.yaml
+  train_file: data/training_data/grpo_ind_wikisum/train.jsonl
+  val_file: data/training_data/grpo_ind_wikisum/val.jsonl
+
+model:
+  name: meta-llama/Llama-3.1-8B-Instruct
+  lora_rank: 32
+  lora_alpha: 64
+  lora_dropout: 0.05
+
+hyperparameters:
+  learning_rate: 5.0e-5
+  num_epochs: 3
+  per_device_train_batch_size: 4
+  gradient_accumulation_steps: 4
+  num_rollouts_per_prompt: 4
+  max_completion_length: 1024
+  warmup_ratio: 0.1
+  bf16: true
+  seed: 42
+
+checkpointing:
+  save_steps: 50
+  eval_steps: 50
+
+evaluation:
+  - type: sgtr
+    name: "IND-WikiSum (in-distribution)"
+    config_path: experiments/ICML_02_UT_IND-Q_Rec_NPr_FA_Inst/config.yaml
+    dataset: wikisum
+    subset: test_set_1-30
+  - type: sgtr
+    name: "PW-WikiSum (cross-operationalization)"
+    config_path: experiments/ICML_01_UT_PW-Q_Rec_NPr_FA_Inst/config.yaml
+    dataset: wikisum
+    subset: test_set_1-30
+  - type: inspect
+    name: "MMLU (capability retention)"
+    task: mmlu
+    num_samples: 200

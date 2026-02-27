@@ -1,0 +1,44 @@
+experiment_name: "14_sft_pw_uuid_split"
+description: "SFT on PW dataset with UUID-level train/val split (160 train, 40 val). Same hyperparams as 13. No data leakage."
+
+algorithm: sft
+backend: tinker
+wandb_project: sgtr-rl
+
+data:
+  evaluator_model: ll-3.1-8b
+  generator_models: [qwen-2.5-7b]
+  dataset: sharegpt
+  subsets: [english_26, english2_74]
+  train_file: data/training_data/sharegpt_pw/train.jsonl
+  val_file: data/training_data/sharegpt_pw/val.jsonl
+
+model:
+  name: meta-llama/Llama-3.1-8B-Instruct
+  lora_rank: 32
+  lora_alpha: 64
+  lora_dropout: 0.05
+
+hyperparameters:
+  learning_rate: 5.0e-5
+  num_epochs: 20
+  per_device_train_batch_size: 16
+  max_completion_length: 512
+  seed: 42
+
+benchmark_evals:
+  mmlu_20:
+    type: mmlu
+    data_file: data/benchmarks/mmlu_20.jsonl
+    schedule: every_epoch
+    cot: false
+  mmlu_500_cot:
+    type: mmlu
+    data_file: data/benchmarks/mmlu_500.jsonl
+    schedule: end_only
+    cot: true
+  mmlu_500:
+    type: mmlu
+    data_file: data/benchmarks/mmlu_500.jsonl
+    schedule: end_only
+    cot: false
