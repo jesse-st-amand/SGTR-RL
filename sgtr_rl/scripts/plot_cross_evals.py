@@ -364,7 +364,6 @@ def plot_flipped_comparison(experiments: dict, output_dir: Path):
     """Compare normal vs flipped experiments side by side."""
     # Find matching normal/flipped pairs
     pairs = []
-    exp_by_name = {name: data for name, data in experiments.items()}
 
     for name, data in experiments.items():
         info = get_experiment_info(data["config"])

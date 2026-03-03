@@ -1,32 +1,88 @@
 """Training configuration for SGTR-RL experiments."""
 
-from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Literal
 
 import yaml
+from pydantic import BaseModel, ConfigDict
 
 
-@dataclass
-class BenchmarkEvalConfig:
+# ---------------------------------------------------------------------------
+# YAML section models (validate structure of each config section)
+# ---------------------------------------------------------------------------
+
+class _ModelSection(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    name: str = "Qwen/Qwen2-1.5B"
+    lora_rank: int = 32
+    lora_alpha: int = 64
+    lora_dropout: float = 0.05
+    lora_target_modules: list[str] = ["q_proj", "v_proj"]
+
+
+class _HyperparameterSection(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    learning_rate: float = 5e-5
+    num_epochs: int = 3
+    per_device_train_batch_size: int = 4
+    gradient_accumulation_steps: int = 4
+    warmup_ratio: float = 0.1
+    bf16: bool = True
+    seed: int = 42
+    num_rollouts_per_prompt: int = 4
+    max_completion_length: int = 1024
+    sampling_temperature: float = 1.0
+
+
+class _DataSection(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    train_file: str = ""
+    val_file: str = ""
+    flip_targets: bool = False
+    evaluator_model: str = ""
+    generator_models: list[str] = []
+    dataset: str = ""
+    subset: str = ""  # legacy (exp 01)
+    subsets: list[str] = []
+    sgtr_experiment_config: str = ""  # legacy (exp 01)
+
+
+class _CheckpointSection(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    save_steps: int = 50
+    eval_steps: int = 50
+
+
+# ---------------------------------------------------------------------------
+# Runtime config models
+# ---------------------------------------------------------------------------
+
+class BenchmarkEvalConfig(BaseModel):
     """Configuration for a single benchmark evaluation."""
 
+    model_config = ConfigDict(extra="forbid")
+
     name: str = ""
-    type: str = "mmlu"  # "mmlu" | "sgtr"
+    type: Literal["mmlu", "sgtr"] = "mmlu"
     data_file: str = ""
     schedule: str = "every_epoch"  # "every_epoch" | "every_N_epochs" | "end_only"
     frequency: int = 1  # for "every_N_epochs"
     cot: bool = False
     flip_targets: bool = False  # swap "1"<->"2" at eval time
     num_samples: int | None = None  # deterministic subsample size (None = use all)
+    filter_model: str | None = None  # filter eval data to this "other" model only
 
 
-@dataclass
-class TrainingConfig:
+class TrainingConfig(BaseModel):
     """Configuration for SGTR-RL training runs."""
 
     # Core
-    algorithm: str = "grpo"  # "grpo" | "dpo" | "sft"
-    backend: str = "local"  # "local" | "tinker"
+    algorithm: Literal["grpo", "sft"] = "grpo"
+    backend: Literal["local", "tinker"] = "local"
     experiment_name: str = ""
 
     # Model
@@ -34,7 +90,7 @@ class TrainingConfig:
     lora_rank: int = 32
     lora_alpha: int = 64
     lora_dropout: float = 0.05
-    lora_target_modules: list[str] = field(default_factory=lambda: ["q_proj", "v_proj"])
+    lora_target_modules: list[str] = ["q_proj", "v_proj"]
 
     # Training
     learning_rate: float = 5e-5
@@ -46,10 +102,9 @@ class TrainingConfig:
     seed: int = 42
 
     # GRPO-specific
-    num_rollouts_per_prompt: int = 4  # rollouts per prompt per step
-    max_completion_length: int = 1024  # max tokens for generated rollout
-    beta: float = 0.1  # KL penalty (if used)
-    sampling_temperature: float = 1.0  # temperature for rollout sampling
+    num_rollouts_per_prompt: int = 4
+    max_completion_length: int = 1024
+    sampling_temperature: float = 1.0
 
     # Data
     train_file: str = ""
@@ -64,17 +119,29 @@ class TrainingConfig:
     wandb_project: str | None = None  # W&B project name; None = wandb disabled
 
     # Checkpointing
-    save_steps: int = 50  # checkpoint every N steps
-    eval_steps: int = 50  # run evals every N steps
+    save_steps: int = 50
+    eval_steps: int = 50
 
     # Benchmark evaluations (e.g. MMLU canary)
-    benchmark_evals: list[BenchmarkEvalConfig] = field(default_factory=list)
+    benchmark_evals: list[BenchmarkEvalConfig] = []
+
+
+# ---------------------------------------------------------------------------
+# Known top-level YAML keys (validated in load_training_config)
+# ---------------------------------------------------------------------------
+
+_KNOWN_TOP_KEYS = {
+    "experiment_name", "description", "algorithm", "backend",
+    "model", "hyperparameters", "data", "checkpointing",
+    "wandb_project", "benchmark_evals", "evaluation",
+}
 
 
 def load_training_config(yaml_path: str | Path) -> TrainingConfig:
     """Load a TrainingConfig from an experiment YAML file.
 
-    Maps the nested YAML structure to the flat TrainingConfig dataclass.
+    Maps the nested YAML structure to the flat TrainingConfig.
+    Raises ValueError on unknown keys in any section.
 
     Args:
         yaml_path: Path to the experiment config YAML.
@@ -89,25 +156,35 @@ def load_training_config(yaml_path: str | Path) -> TrainingConfig:
     with open(yaml_path, "r") as f:
         cfg = yaml.safe_load(f)
 
-    model_cfg = cfg.get("model", {})
-    hp = cfg.get("hyperparameters", {})
-    data_cfg = cfg.get("data", {})
-    ckpt_cfg = cfg.get("checkpointing", {})
+    # Validate top-level keys
+    unknown_top = set(cfg.keys()) - _KNOWN_TOP_KEYS
+    if unknown_top:
+        raise ValueError(f"Unknown top-level config keys: {unknown_top}")
+
+    # Parse and validate each section (extra="forbid" catches typos)
+    model = _ModelSection(**cfg.get("model", {}))
+    hp = _HyperparameterSection(**cfg.get("hyperparameters", {}))
+    data = _DataSection(**cfg.get("data", {}))
+    ckpt = _CheckpointSection(**cfg.get("checkpointing", {}))
 
     # Parse benchmark_evals section
     bench_cfg = cfg.get("benchmark_evals", {})
     benchmark_evals = []
+    auto_filter_model = (
+        data.generator_models[0] if len(data.generator_models) == 1 else None
+    )
+
     if bench_cfg:
         for name, bcfg in bench_cfg.items():
+            filter_model = bcfg.get("filter_model")
+            if filter_model == "auto":
+                filter_model = auto_filter_model
+            # Pop filter_model before validation so "auto" doesn't fail Literal check
+            bcfg_clean = {k: v for k, v in bcfg.items() if k != "filter_model"}
             benchmark_evals.append(BenchmarkEvalConfig(
                 name=name,
-                type=bcfg.get("type", "mmlu"),
-                data_file=bcfg.get("data_file", ""),
-                schedule=bcfg.get("schedule", "every_epoch"),
-                frequency=bcfg.get("frequency", 1),
-                cot=bcfg.get("cot", False),
-                flip_targets=bcfg.get("flip_targets", False),
-                num_samples=bcfg.get("num_samples"),
+                filter_model=filter_model,
+                **bcfg_clean,
             ))
 
     return TrainingConfig(
@@ -115,32 +192,31 @@ def load_training_config(yaml_path: str | Path) -> TrainingConfig:
         backend=cfg.get("backend", "local"),
         experiment_name=cfg.get("experiment_name", ""),
         # Model
-        model_name=model_cfg.get("name", "Qwen/Qwen2-1.5B"),
-        lora_rank=model_cfg.get("lora_rank", 32),
-        lora_alpha=model_cfg.get("lora_alpha", 64),
-        lora_dropout=model_cfg.get("lora_dropout", 0.05),
-        lora_target_modules=model_cfg.get("lora_target_modules", ["q_proj", "v_proj"]),
+        model_name=model.name,
+        lora_rank=model.lora_rank,
+        lora_alpha=model.lora_alpha,
+        lora_dropout=model.lora_dropout,
+        lora_target_modules=model.lora_target_modules,
         # Hyperparameters
-        learning_rate=hp.get("learning_rate", 5e-5),
-        num_epochs=hp.get("num_epochs", 3),
-        per_device_train_batch_size=hp.get("per_device_train_batch_size", 4),
-        gradient_accumulation_steps=hp.get("gradient_accumulation_steps", 4),
-        warmup_ratio=hp.get("warmup_ratio", 0.1),
-        bf16=hp.get("bf16", True),
-        seed=hp.get("seed", 42),
-        num_rollouts_per_prompt=hp.get("num_rollouts_per_prompt", 4),
-        max_completion_length=hp.get("max_completion_length", 1024),
-        beta=hp.get("beta", 0.1),
-        sampling_temperature=hp.get("sampling_temperature", 1.0),
+        learning_rate=hp.learning_rate,
+        num_epochs=hp.num_epochs,
+        per_device_train_batch_size=hp.per_device_train_batch_size,
+        gradient_accumulation_steps=hp.gradient_accumulation_steps,
+        warmup_ratio=hp.warmup_ratio,
+        bf16=hp.bf16,
+        seed=hp.seed,
+        num_rollouts_per_prompt=hp.num_rollouts_per_prompt,
+        max_completion_length=hp.max_completion_length,
+        sampling_temperature=hp.sampling_temperature,
         # Data
-        train_file=data_cfg.get("train_file", ""),
-        val_file=data_cfg.get("val_file", ""),
-        flip_targets=data_cfg.get("flip_targets", False),
+        train_file=data.train_file,
+        val_file=data.val_file,
+        flip_targets=data.flip_targets,
         # Logging
         wandb_project=cfg.get("wandb_project"),
         # Checkpointing
-        save_steps=ckpt_cfg.get("save_steps", 50),
-        eval_steps=ckpt_cfg.get("eval_steps", 50),
+        save_steps=ckpt.save_steps,
+        eval_steps=ckpt.eval_steps,
         # Benchmarks
         benchmark_evals=benchmark_evals,
     )

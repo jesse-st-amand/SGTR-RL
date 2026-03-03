@@ -13,15 +13,12 @@ The model (Llama-3.1-8B-Instruct) is trained via **SFT** (supervised fine-tuning
 ```
 SGTR-RL/
 ├── sgtr_rl/                      # Main Python package
-│   ├── config/                   # Data path resolution
 │   ├── data_processing/          # Data loading and prompt construction
 │   ├── training/                 # Training loop, reward, config, logging
 │   ├── evaluation/               # Checkpoint evaluation via inspect-ai
 │   └── scripts/                  # CLI entry points
 ├── experiments/                  # Experiment configs (one YAML per experiment)
 ├── analysis/                     # Log parsing, plotting, and Jupyter notebook
-├── scripts/                      # Plotting and analysis scripts
-├── config/                       # Data path configuration
 ├── data/                         # Data directory (gitignored, see below)
 ├── results/                      # Training run outputs (gitignored)
 ├── docs/                         # Documentation (this file)
@@ -38,18 +35,18 @@ SGTR-RL/
 | `grpo_trainer.py` | `TinkerRLTrainer` (Tinker API) and `LocalGRPOTrainer` (TRL/local GPU). Implements the GRPO loop: sample rollouts, compute rewards, center advantages within groups, build Tinker datums, call `forward_backward` + `optim_step`. |
 | `sft_trainer.py` | `TinkerSFTTrainer` — supervised fine-tuning via Tinker's `cross_entropy` loss. Trains on labeled (prompt, target) pairs with loss weights only on assistant tokens. Simpler than GRPO: no rollouts or advantages. |
 | `eval.py` | Shared validation evaluation logic. `evaluate_val()` (greedy accuracy), `compute_val_nll()` (forward-pass NLL), `log_val_result()`, `log_val_metrics()`, `save_val_predictions()`. Used by both SFT and GRPO trainers. |
-| `train_config.py` | `TrainingConfig` dataclass + `load_training_config()` YAML parser. All hyperparameters flow through here. |
+| `train_config.py` | `TrainingConfig` dataclass + `load_training_config()` YAML parser. All hyperparameters flow through here. Includes `BenchmarkEvalConfig` with `filter_model` support. |
 | `reward.py` | `sgtr_binary_reward()` — extracts "1" or "2" from model output, returns 1.0 if correct, 0.0 otherwise. `_extract_answer()` handles both bare digits and "Answer: N" patterns. |
 | `run_dir.py` | Creates structured run directories under `results/`. Handles run naming, config freezing, and existing-run policies. |
 | `plot_summary.py` | `generate_summary_plot()` — generates a 3-subplot summary figure (loss, accuracy, benchmarks) from `metrics/metrics.jsonl`. Auto-called at end of training. |
-| `benchmark_eval.py` | Benchmark evaluation during training (MMLU and SGTR cross-eval). Supports `type: mmlu` and `type: sgtr`, runtime label flipping (`flip_targets`), and deterministic subsampling (`num_samples`). |
+| `benchmark_eval.py` | Benchmark evaluation during training. Supports `type: mmlu` (inspect-ai compatible prompt format, max_tokens=16 for non-CoT) and `type: sgtr` (cross-eval with `filter_model` for model-specific filtering, `flip_targets` for label flipping, `num_samples` for subsampling). |
 | `logging_setup.py` | Dual logging to terminal + file. |
 
 ### `sgtr_rl/scripts/` — CLI Entry Points
 
 | Script | Purpose | Example |
 |--------|---------|---------|
-| `train.py` | Main training entry point | `python -m sgtr_rl.scripts.train --config experiments/03_.../config.yaml` |
+| `train.py` | Main training entry point | `python -m sgtr_rl.scripts.train --config experiments/15_.../config.yaml` |
 | `extract_from_eval.py` | Extract training data from `.eval` files | `python -m sgtr_rl.scripts.extract_from_eval --eval_dir data/original/llama8b --output data/training_data/sharegpt_ind/ --format ind` |
 | `prepare_data.py` | Build prompts from raw generation data (alternative to extract_from_eval) | `python -m sgtr_rl.scripts.prepare_data --evaluator_model ll-3.1-8b ...` |
 | `eval_baseline.py` | Evaluate base model accuracy on any JSONL dataset via Tinker | `python sgtr_rl/scripts/eval_baseline.py --data data/training_data/sharegpt_ind_cot/val.jsonl` |
@@ -57,21 +54,20 @@ SGTR-RL/
 | `dry_run.py` | Simulate training locally (no GPU/API) to validate reward/advantage logic | `python sgtr_rl/scripts/dry_run.py --config experiments/.../config.yaml` |
 | `prepare_mmlu.py` | Download MMLU from HuggingFace and prepare 20-sample + 500-sample benchmark JSONL files | `python -m sgtr_rl.scripts.prepare_mmlu` |
 | `download_hf_data.py` | Download SGTR eval results from HuggingFace, reorganize, and optionally extract training JSONL | `python -m sgtr_rl.scripts.download_hf_data --evaluator ll-3.1-8b --dataset sharegpt --name llama8b --extract` |
+| `plot_cross_evals.py` | Plot cross-eval results across experiments 15-22 (overview, heatmaps, format comparisons) | `python -m sgtr_rl.scripts.plot_cross_evals` |
 
 ### `sgtr_rl/data_processing/` — Data Preparation
 
-| File | Purpose | Status |
-|------|---------|--------|
-| `prompt_builder.py` | Build SGTR prompts from raw generation data via self-rec-framework | Active (used by `prepare_data.py`) |
-| `validate_data.py` | Validate train/val JSONL integrity: schema, target values, UUID overlap, PW format checks | Active |
-| `eval_loader.py` | Parse `.eval` files into `EvalSample` objects for DPO | Stale (DPO not in use) |
-| `triple_generator.py` | Generate DPO (prompt, chosen, rejected) triples | Stale (DPO not in use) |
+| File | Purpose |
+|------|---------|
+| `prompt_builder.py` | Build SGTR prompts from raw generation data via self-rec-framework |
+| `validate_data.py` | Validate train/val JSONL integrity: schema, target values, UUID overlap, PW format checks |
 
 ### `sgtr_rl/evaluation/` — Checkpoint Evaluation
 
 | File | Purpose |
 |------|---------|
-| `evaluator.py` | `evaluate_checkpoint()` — runs SGTR and standard inspect-ai benchmarks. `EvalCallback` for periodic eval during training. |
+| `evaluator.py` | `evaluate_checkpoint()` — runs SGTR and standard inspect-ai benchmarks via `get_model_str()`. |
 
 ### `analysis/` — Log Parsing and Visualization
 
@@ -86,35 +82,45 @@ SGTR-RL/
 
 Each experiment is a YAML file defining model, data, hyperparameters, and evaluation tasks.
 
-| Experiment | Description | Backend |
-|-----------|-------------|---------|
-| `01_RL_grpo_IND_WikiSum` | WikiSum individual recognition | local |
-| `02_RL_grpo_IND_ShareGPT` | ShareGPT individual recognition | local |
-| `03_RL_grpo_IND_ShareGPT_CoT` | ShareGPT with chain-of-thought prompts | tinker |
-| `04_overfit_debug` | Overfit 16 prompts (debugging) | tinker |
-| `05_trivial_sanity` | Trivial task (all targets="1") — pipeline validation | tinker |
-| `06_trivial_sanity_2` | Trivial task (all targets="2") — pipeline validation | tinker |
-| `07_overfit_high_temp` | Overfit with sampling_temperature=1.5 | tinker |
-| `08_sft_ind_cot` | SFT warmup on IND_COT (320 train, 80 val) | tinker |
-| `09_sft_pairwise` | SFT warmup on PW (184 train, 62 val) — sample-level split (leaked) | tinker |
-| `14_sft_pw_uuid_split` | SFT on PW with UUID-level split (160 train, 40 val, no leakage) | tinker |
+| Experiment | Description | Status |
+|-----------|-------------|--------|
+| `01_RL_grpo_IND_WikiSum` | WikiSum individual recognition (GRPO, local) | Early prototype |
+| `02_RL_grpo_IND_ShareGPT` | ShareGPT individual recognition (GRPO, local) | Early prototype |
+| `03_RL_grpo_IND_ShareGPT_CoT` | ShareGPT with chain-of-thought prompts (GRPO, tinker) | Early prototype |
+| `04–13` | Debug/sanity experiments (overfit, trivial tasks, format checks) | Debug |
+| `14_sft_pw_uuid_split` | SFT on PW with UUID-level split (160 train, 40 val) | Completed |
+| `15_sft_pw_rec_vs_qwen` | SFT PW recognition, Llama vs Qwen (158 train, 38 val) | Completed |
+| `16_sft_ind_rec_vs_qwen` | SFT IND recognition, Llama vs Qwen | Completed |
+| `17_sft_pw_rec_flipped_vs_qwen` | SFT PW recognition flipped (anti-self), Llama vs Qwen | Completed |
+| `18_sft_ind_rec_flipped_vs_qwen` | SFT IND recognition flipped (anti-self), Llama vs Qwen | Completed |
+| `19_sft_pw_rec_vs_haiku` | SFT PW recognition, Llama vs Haiku-3.5 | Completed |
+| `20_sft_pw_rec_vs_gpt4o` | SFT PW recognition, Llama vs GPT-4o | Completed |
+| `21_sft_pw_rec_vs_ll70b` | SFT PW recognition, Llama vs Llama-3.1-70B | Completed |
+| `22_sft_pw_rec_vs_opus` | SFT PW recognition, Llama vs Claude Opus | Completed |
+
+Experiments 15-22 share a common structure: they train Llama-3.1-8B on SGTR with cross-domain and cross-format evals (MMLU, cross-format SGTR, wikisum, pku, bigcode benchmarks). Experiments 15-18 compare formats (PW vs IND) and self vs anti-self against Qwen. Experiments 19-22 vary the "other" model.
 
 ### `data/` — Data Directory (gitignored)
 
 ```
 data/
-├── original/              # Source .eval files (inspect-ai zip archives)
-│   └── llama8b/           # Llama-3.1-8B eval data
-├── raw/                   # Pristine copies of processed data (backup)
-├── training_data/         # JSONL datasets for training
-│   ├── sharegpt_ind/      # Individual format (320 train, 80 val)
-│   ├── sharegpt_ind_cot/  # Individual + CoT (320 train, 80 val)
-│   ├── sharegpt_pw/       # Pairwise format (UUID-level split, both orderings)
-│   ├── sharegpt_ind_cot_overfit/  # 16-sample debug subset
-│   ├── trivial_test/      # Debug: all targets="1"
-│   └── trivial_test_2/    # Debug: all targets="2"
-├── cached_generations/    # Symlink to self-rec-framework/data/results
-├── checkpoints/           # Model checkpoints
+├── original/                         # Source .eval files (inspect-ai zip archives)
+│   └── llama8b/                      # Llama-3.1-8B eval data
+├── training_data/                    # JSONL datasets for training
+│   ├── llama8b_pw_rec_qwen_pw/       # PW recognition, Llama vs Qwen
+│   ├── llama8b_ind_rec_qwen_ind/     # IND recognition, Llama vs Qwen
+│   ├── llama8b_pw_pref_pw/           # PW preference
+│   ├── llama8b_ind_pref_ind/         # IND preference
+│   ├── xeval_wikisum_pw_rec_pw/      # Cross-domain: WikiSum PW rec
+│   ├── xeval_pku_pw_rec_pw/          # Cross-domain: PKU SafeRLHF PW rec
+│   ├── xeval_bigcode_pw_rec_pw/      # Cross-domain: BigCodeBench PW rec
+│   ├── sharegpt_ind/                 # Individual format (legacy)
+│   ├── sharegpt_ind_cot/             # Individual + CoT (legacy)
+│   └── sharegpt_pw/                  # Pairwise format (legacy, exp 14)
+├── benchmarks/                       # Benchmark data
+│   ├── mmlu_20.jsonl                 # MMLU 20-sample canary
+│   └── mmlu_500.jsonl                # MMLU 500-sample evaluation
+├── checkpoints/                      # Model checkpoints
 └── README.md
 ```
 
@@ -122,16 +128,17 @@ data/
 
 Each run creates a directory under `results/`:
 ```
-results/{experiment_name}__{overrides}__{timestamp}/
-├── config.yaml          # Frozen config (including CLI overrides)
-├── extraction_meta.json # Data extraction metadata
-├── train.log            # Full training log
-├── summary.png          # Auto-generated 3-subplot summary figure
-├── metrics/             # W&B and JSON metric logs
-├── val_predictions/     # Per-epoch val predictions (epoch_0.json, epoch_1.json, ...)
-├── benchmark_predictions/ # Per-epoch benchmark predictions
-└── checkpoints/         # Saved model checkpoints
+results/{experiment_name}__{timestamp}/
+├── config.yaml              # Frozen config (including CLI overrides)
+├── train.log                # Full training log
+├── summary.png              # Auto-generated summary figure
+├── metrics/                 # W&B and JSON metric logs
+├── val_predictions/         # Per-epoch val predictions (epoch_0.json, ...)
+├── benchmark_predictions/   # Per-epoch benchmark predictions
+└── checkpoints/             # Saved model checkpoints
 ```
+
+Cross-eval batch results are in `results/batch_15-22_sft_cross_evals/`.
 
 View with: W&B dashboard (project configured via `wandb_project` in config)
 
@@ -149,8 +156,15 @@ View with: W&B dashboard (project configured via `wandb_project` in config)
 
 Targets are always `"1"` or `"2"`.
 
-## How Training Works (TinkerRLTrainer)
+## How Training Works (TinkerSFTTrainer / TinkerRLTrainer)
 
+### SFT (primary approach for experiments 14-22)
+1. Load JSONL prompts and connect to Tinker API
+2. For each batch of prompts: compute cross-entropy loss on (prompt, target) pairs with assistant-token masking
+3. At each epoch boundary: run greedy eval on val set + compute val NLL + run benchmark evals
+4. Log metrics to W&B and `train.log`
+
+### GRPO
 1. Load JSONL prompts and connect to Tinker API
 2. For each batch of prompts:
    - Sample `num_rollouts_per_prompt` completions per prompt via Tinker
@@ -160,7 +174,6 @@ Targets are always `"1"` or `"2"`.
    - Build Tinker `Datum` objects with importance sampling loss inputs
    - Call `forward_backward` + `optim_step`
 3. At each epoch boundary: run greedy eval on validation set + compute val NLL
-4. Log metrics to W&B and `train.log`
 
 Key insight: GRPO needs **within-group variance** to learn. If all rollouts for a prompt give the same answer, that group provides zero gradient signal.
 
@@ -177,10 +190,10 @@ cp .env.template .env       # Add TINKER_API_KEY
 
 ```bash
 # Run an experiment
-python -m sgtr_rl.scripts.train --config experiments/03_RL_grpo_IND_ShareGPT_CoT/config.yaml
+python -m sgtr_rl.scripts.train --config experiments/15_sft_pw_rec_vs_qwen/config.yaml
 
 # With CLI overrides
-python -m sgtr_rl.scripts.train --config experiments/03_.../config.yaml \
+python -m sgtr_rl.scripts.train --config experiments/15_.../config.yaml \
     --learning_rate 1e-4 --num_epochs 5
 
 # Skip if run already exists
@@ -207,6 +220,10 @@ python -m sgtr_rl.scripts.extract_from_eval \
     --eval_dir data/original/llama8b \
     --output data/training_data/sharegpt_pw/ \
     --format pw
+
+# Download from HuggingFace and extract in one step:
+python -m sgtr_rl.scripts.download_hf_data \
+    --evaluator ll-3.1-8b --dataset sharegpt --name llama8b --extract
 ```
 
 ### Baseline Evaluation
@@ -221,6 +238,9 @@ python sgtr_rl/scripts/eval_baseline.py \
 ```bash
 # Generate plots for a run
 python -m analysis.plot_run results/my_run_dir/
+
+# Cross-eval analysis across experiments 15-22
+python -m sgtr_rl.scripts.plot_cross_evals
 
 # Or use the Jupyter notebook
 jupyter lab analysis/analysis.ipynb
@@ -261,29 +281,23 @@ Tests live in `tests/` and cover:
 |------|--------------|
 | `test_validate_data.py` | Data validation — UUID leakage, schema, targets, PW ordering |
 | `test_reward.py` | Answer extraction and binary reward |
-| `test_benchmark_eval.py` | MMLU prompt formatting, answer extraction, schedule logic |
+| `test_benchmark_eval.py` | MMLU prompt formatting (inspect-ai format), answer extraction, schedule logic, model filtering |
 | `test_run_dir.py` | Run naming, override computation, directory creation |
-| `test_train_config.py` | YAML config loading and defaults |
+| `test_train_config.py` | YAML config loading, defaults, filter_model resolution |
 | `test_plot_summary.py` | Title building, smoothing, summary plot generation |
 | `test_data_integrity.py` | Validates actual data files on disk (marked `@datasci`) |
+| `test_download_hf_data.py` | HF data download: filename parsing, format detection, filtering |
+| `integration/test_sft_lowlevel.py` | SFT pipeline: cross-entropy loss, accuracy threshold, eval schedule, flip_targets, batching, checkpoints |
+| `integration/test_grpo_lowlevel.py` | GRPO pipeline: importance sampling loss, advantage centering, zero-signal skipping, reward wiring, datum construction |
+| `integration/test_highlevel.py` | Loop structure for both trainers: eval/benchmark schedules, step counts, sampling order |
 
-When modifying data processing, validation, or reward logic, add or update corresponding tests. Data integrity tests (`@datasci`) should be updated when data formats or splits change.
-
-### Branch
-
-Working branch: check `git branch` (development has been on feature branches off `main`).
+Integration tests mock Tinker at the `sys.modules` level (see `integration/conftest.py`) so the full training loop runs without GPU access.
 
 ### Adding a New Experiment
 
-1. Create `experiments/NN_description/config.yaml` (copy from an existing one)
+1. Create `experiments/NN_description/config.yaml` (copy from experiment 15 as a template)
 2. Prepare training data if needed (see above)
 3. Run: `python -m sgtr_rl.scripts.train --config experiments/NN_.../config.yaml`
-
-### Adding a New Training Algorithm
-
-1. Add the algorithm name to `TrainingConfig.algorithm` options
-2. Create a new trainer class (follow `TinkerRLTrainer` pattern)
-3. Register it in `sgtr_rl/scripts/train.py` `TRAINERS` dict
 
 ### Experiment Config Schema
 
@@ -291,12 +305,17 @@ Working branch: check `git branch` (development has been on feature branches off
 experiment_name: "descriptive_name"
 description: "What this experiment tests"
 
-algorithm: grpo          # grpo | dpo | sft
-backend: tinker          # tinker | local
+algorithm: sft               # grpo | sft
+backend: tinker              # tinker | local
 
 data:
-  train_file: data/training_data/sharegpt_ind_cot/train.jsonl
-  val_file: data/training_data/sharegpt_ind_cot/val.jsonl
+  evaluator_model: ll-3.1-8b            # Short name of the model being trained
+  generator_models: [qwen-2.5-7b]       # "Other" model(s) in the SGTR data
+  dataset: sharegpt                      # Dataset source
+  subsets: [english_26, english2_74]     # Dataset subsets
+  train_file: data/training_data/.../train.jsonl
+  val_file: data/training_data/.../val.jsonl
+  flip_targets: false        # Swap "1"<->"2" in training/val data (anti-self)
 
 model:
   name: meta-llama/Llama-3.1-8B-Instruct
@@ -308,28 +327,31 @@ wandb_project: sgtr-rl       # Optional: W&B project name (omit to disable)
 
 hyperparameters:
   learning_rate: 5.0e-5
-  num_epochs: 3
-  per_device_train_batch_size: 4
-  num_rollouts_per_prompt: 8
+  num_epochs: 20
+  per_device_train_batch_size: 16
   max_completion_length: 512
-  sampling_temperature: 1.0    # Controls rollout diversity
+  sampling_temperature: 1.0    # Controls rollout diversity (GRPO only)
   seed: 42
 
 checkpointing:
   save_steps: 20
   eval_steps: 20
 
-benchmark_evals:                     # Optional: run during training at epoch boundaries
+benchmark_evals:
   mmlu_canary:
     type: mmlu                       # "mmlu" | "sgtr"
     data_file: data/benchmarks/mmlu_500.jsonl
     num_samples: 20                  # Deterministic subsample (omit for all)
-    schedule: every_epoch
+    schedule: every_epoch            # "every_epoch" | "every_N_epochs" | "end_only"
+    cot: false                       # Chain-of-thought (non-CoT uses max_tokens=16)
   cross_ind_val:
-    type: sgtr                       # Evaluate any SGTR JSONL as a benchmark
-    data_file: data/training_data/sharegpt_ind/val.jsonl
-    schedule: every_epoch
+    type: sgtr
+    data_file: data/training_data/llama8b_ind_rec_qwen_ind/val.jsonl
+    schedule: every_5_epochs
+    frequency: 5                     # For every_N_epochs schedule
+    filter_model: auto               # Filter to this "other" model ("auto" = from generator_models)
     flip_targets: false              # Swap "1"<->"2" at eval time
+    num_samples: 78
 ```
 
 #### Cross-Eval and Label Flipping
@@ -338,7 +360,22 @@ benchmark_evals:                     # Optional: run during training at epoch bo
 - In `data:` section: flips training and validation targets (for anti-self experiments)
 - In `benchmark_evals:`: flips comparison targets at eval time
 
-`num_samples` subsamples benchmark data deterministically (seed=42), replacing the need for separate mmlu_20/mmlu_500 files. Set to `null` or omit to use all data.
+`num_samples` subsamples benchmark data deterministically (seed=42).
+
+#### filter_model
+
+`filter_model` filters SGTR benchmark data to only samples involving a specific "other" model. Without this, cross-eval data files that contain multiple generator models would evaluate on a mixture.
+- `filter_model: auto` resolves to the single model in `data.generator_models` (requires exactly one entry)
+- `filter_model: "gpt-4o"` filters explicitly to that model
+- Omit for MMLU or single-model data files
+
+#### MMLU Prompt Format
+
+MMLU prompts use the inspect-ai 0-shot template:
+- Choices formatted as `A) text` (not `A. text`)
+- Instruction uses `'ANSWER: $LETTER'` format
+- Non-CoT: `max_tokens=16` to prevent hidden reasoning
+- CoT: full token budget with "Think step by step" instruction
 
 ## Key Dependencies
 
@@ -347,14 +384,15 @@ benchmark_evals:                     # Optional: run during training at epoch bo
 | `tinker` + `tinker-cookbook` | Managed GPU training (LoRA fine-tuning, sampling, checkpoints, ml_log) |
 | `self-rec-framework` | SGTR experiment configs, prompts, evaluation tasks |
 | `inspect-ai` | LLM evaluation framework (.eval file format) |
+| `huggingface-hub` | Dataset downloads from HuggingFace |
 | `trl` + `peft` + `transformers` | Local GPU training path (HuggingFace stack) |
 | `torch` | Tensor operations for Tinker datum construction |
 | `wandb` | Experiment tracking and metric visualization |
 
 ## Known Issues / Technical Debt
 
-- **DPO infrastructure** (`eval_loader.py`, `triple_generator.py`, `test_data_loading.py`) is unused but kept for potential future use
 - `PROJECT_SETUP.md` and `SETUP_COMPLETE.md` are stale planning documents from early project phases
-- `config/paths.py` has helper functions (`get_checkpoints_path()`, etc.) that aren't used by the current training pipeline
 - `data/README.md` references DPO-era terminology and paths
-- **Small dataset**: Current PW dataset is 100 unique pairs (200 records). Results are promising (97.5% val accuracy with SFT after 20 epochs) but more data would improve robustness
+- **Small dataset**: Current PW dataset is ~160 train / ~40 val unique pairs per experiment. SFT reaches 90%+ val accuracy but more data would improve robustness
+- Experiments 04-13 are debug/sanity configs that could be archived
+- `evaluator.py` has not been used in the recent experiment runs (benchmark evals are handled by `benchmark_eval.py` within the training loop)

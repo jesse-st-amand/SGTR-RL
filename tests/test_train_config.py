@@ -2,6 +2,7 @@
 
 import pytest
 import yaml
+from pydantic import ValidationError
 
 from sgtr_rl.training.train_config import (
     BenchmarkEvalConfig,
@@ -167,6 +168,57 @@ class TestLoadTrainingConfig:
         with pytest.raises(FileNotFoundError):
             load_training_config(str(tmp_path / "nonexistent.yaml"))
 
+    def test_filter_model_auto_resolves(self, tmp_path):
+        """filter_model: auto should resolve to the single generator model."""
+        config = {
+            "experiment_name": "filter_test",
+            "data": {
+                "train_file": "train.jsonl",
+                "val_file": "val.jsonl",
+                "generator_models": ["haiku-3.5"],
+            },
+            "benchmark_evals": {
+                "wikisum_xeval": {
+                    "type": "sgtr",
+                    "data_file": "data/xeval_wikisum.jsonl",
+                    "filter_model": "auto",
+                },
+                "mmlu_20": {
+                    "type": "mmlu",
+                    "data_file": "data/mmlu_20.jsonl",
+                },
+            },
+        }
+        path = tmp_path / "config.yaml"
+        with open(path, "w") as f:
+            yaml.dump(config, f)
+
+        cfg = load_training_config(str(path))
+        sgtr_bench = next(b for b in cfg.benchmark_evals if b.name == "wikisum_xeval")
+        assert sgtr_bench.filter_model == "haiku-3.5"
+
+        mmlu_bench = next(b for b in cfg.benchmark_evals if b.name == "mmlu_20")
+        assert mmlu_bench.filter_model is None
+
+    def test_filter_model_explicit(self, tmp_path):
+        """filter_model can be set to a specific model name."""
+        config = {
+            "experiment_name": "filter_explicit",
+            "benchmark_evals": {
+                "xeval": {
+                    "type": "sgtr",
+                    "data_file": "data/xeval.jsonl",
+                    "filter_model": "gpt-4o",
+                },
+            },
+        }
+        path = tmp_path / "config.yaml"
+        with open(path, "w") as f:
+            yaml.dump(config, f)
+
+        cfg = load_training_config(str(path))
+        assert cfg.benchmark_evals[0].filter_model == "gpt-4o"
+
 
 # ---------------------------------------------------------------------------
 # TrainingConfig defaults
@@ -182,3 +234,84 @@ class TestTrainingConfigDefaults:
         assert cfg.bf16 is True
         assert cfg.benchmark_evals == []
         assert cfg.wandb_project is None
+
+
+# ---------------------------------------------------------------------------
+# YAML validation (unknown keys, type errors)
+# ---------------------------------------------------------------------------
+
+class TestConfigValidation:
+    def test_unknown_top_level_key_raises(self, tmp_path):
+        config = {"experiment_name": "test", "unkown_key": True}
+        path = tmp_path / "config.yaml"
+        with open(path, "w") as f:
+            yaml.dump(config, f)
+
+        with pytest.raises(ValueError, match="Unknown top-level"):
+            load_training_config(str(path))
+
+    def test_typo_in_hyperparameters_raises(self, tmp_path):
+        config = {
+            "experiment_name": "test",
+            "hyperparameters": {"lerning_rate": 1e-4},  # typo
+        }
+        path = tmp_path / "config.yaml"
+        with open(path, "w") as f:
+            yaml.dump(config, f)
+
+        with pytest.raises(ValidationError):
+            load_training_config(str(path))
+
+    def test_typo_in_model_section_raises(self, tmp_path):
+        config = {
+            "experiment_name": "test",
+            "model": {"naem": "test-model"},  # typo
+        }
+        path = tmp_path / "config.yaml"
+        with open(path, "w") as f:
+            yaml.dump(config, f)
+
+        with pytest.raises(ValidationError):
+            load_training_config(str(path))
+
+    def test_typo_in_data_section_raises(self, tmp_path):
+        config = {
+            "experiment_name": "test",
+            "data": {"trian_file": "train.jsonl"},  # typo
+        }
+        path = tmp_path / "config.yaml"
+        with open(path, "w") as f:
+            yaml.dump(config, f)
+
+        with pytest.raises(ValidationError):
+            load_training_config(str(path))
+
+    def test_wrong_type_raises(self, tmp_path):
+        config = {
+            "experiment_name": "test",
+            "hyperparameters": {"learning_rate": "not_a_number"},
+        }
+        path = tmp_path / "config.yaml"
+        with open(path, "w") as f:
+            yaml.dump(config, f)
+
+        with pytest.raises(ValidationError):
+            load_training_config(str(path))
+
+    def test_unknown_benchmark_field_raises(self, tmp_path):
+        config = {
+            "experiment_name": "test",
+            "benchmark_evals": {
+                "test_bench": {
+                    "type": "mmlu",
+                    "data_file": "test.jsonl",
+                    "unknwon_field": True,
+                },
+            },
+        }
+        path = tmp_path / "config.yaml"
+        with open(path, "w") as f:
+            yaml.dump(config, f)
+
+        with pytest.raises(ValidationError):
+            load_training_config(str(path))

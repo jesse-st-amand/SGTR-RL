@@ -160,21 +160,3 @@ def _save_results(results: dict, results_dir: str, model_str: str) -> None:
     print(f"Results saved to {out_file}")
 
 
-class EvalCallback:
-    """Lightweight eval callback for use during training.
-
-    Call :meth:`__call__` at ``eval_steps`` intervals to run a small eval
-    suite and collect accuracy over training steps.
-    """
-
-    def __init__(self, model_str: str, eval_tasks: list[dict]):
-        self.model_str = model_str
-        self.eval_tasks = eval_tasks
-        self.history: list[dict] = []
-
-    def __call__(self, step: int) -> dict:
-        """Run evals and record results for the given training step."""
-        results = evaluate_checkpoint(self.model_str, self.eval_tasks)
-        entry = {"step": step, **results}
-        self.history.append(entry)
-        return entry

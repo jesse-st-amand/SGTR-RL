@@ -16,7 +16,6 @@ Usage:
 import argparse
 import json
 import random
-import sys
 from pathlib import Path
 
 from sgtr_rl.training.reward import sgtr_binary_reward, _extract_answer

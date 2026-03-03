@@ -12,7 +12,6 @@ Training data comes from the [self-rec-framework](https://github.com/MARS-3-0-se
 git clone https://github.com/jesse-st-amand/SGTR-RL.git
 cd SGTR-RL
 uv sync
-uv pip install "setuptools<82"  # tensorboard compat
 cp .env.template .env           # fill in TINKER_API_KEY, WANDB_API_KEY
 ```
 
@@ -20,36 +19,37 @@ cp .env.template .env           # fill in TINKER_API_KEY, WANDB_API_KEY
 
 **1. Prepare data** — extract SGTR prompts from eval files:
 ```bash
-# Pairwise format (UUID-level split keeps both orderings together):
+# Download from HuggingFace and extract training data:
+python -m sgtr_rl.scripts.download_hf_data \
+    --evaluator ll-3.1-8b --dataset sharegpt --name llama8b --extract
+
+# Or from local .eval files:
 python -m sgtr_rl.scripts.extract_from_eval \
     --eval_dir data/original/llama8b \
     --output data/training_data/sharegpt_pw/ \
     --format pw
-
-# Individual format:
-python -m sgtr_rl.scripts.extract_from_eval \
-    --eval_dir data/original/llama8b \
-    --output data/training_data/sharegpt_ind/ \
-    --format ind
 ```
 
 **2. Train** — SFT or GRPO with LoRA on Tinker:
 ```bash
 python -m sgtr_rl.scripts.train \
-    --config experiments/14_sft_pw_uuid_split/config.yaml
+    --config experiments/15_sft_pw_rec_vs_qwen/config.yaml
 ```
 
 **3. Monitor** — metrics logged to [Weights & Biases](https://wandb.ai):
 - Val accuracy + NLL computed at each epoch boundary
 - Epoch 0 baseline (untrained model) for reference
-- Per-sample val predictions saved to `val_predictions/`
+- MMLU and cross-domain SGTR benchmarks tracked throughout training
+- Per-sample predictions saved to `val_predictions/` and `benchmark_predictions/`
 
 ## Current Results
 
-SFT on pairwise data (Llama-3.1-8B distinguishing itself from Qwen-2.5-7B on ShareGPT):
-- **90% val accuracy** on held-out UUIDs (80 train / 20 val pairs)
-- Untrained baseline: 45% (below chance)
-- See `results/14_sft_pw_uuid_split__*/training_plot.png`
+SFT experiments 15-22 training Llama-3.1-8B on pairwise and individual SGTR across multiple "other" models (Qwen-2.5-7B, Haiku-3.5, GPT-4o, Llama-70B, Claude Opus):
+- **90%+ val accuracy** on held-out UUIDs across all model pairs
+- Untrained baseline: ~45% (below chance)
+- Cross-format generalisation: training on pairwise transfers to individual and vice versa
+- Cross-domain generalisation: improvements transfer across ShareGPT, WikiSum, PKU, BigCode
+- See `results/batch_15-22_sft_cross_evals/` for plots and analysis
 
 ## Architecture
 
@@ -72,6 +72,8 @@ SGTR-RL/
 │   │   ├── eval.py                 # Shared val evaluation (accuracy, NLL, predictions)
 │   │   ├── train_config.py         # TrainingConfig dataclass + YAML loader
 │   │   ├── reward.py               # Binary reward (extract "1"/"2", compare to target)
+│   │   ├── benchmark_eval.py       # MMLU + SGTR cross-eval during training
+│   │   ├── plot_summary.py         # Auto-generated training summary plots
 │   │   ├── run_dir.py              # Structured run directory creation
 │   │   └── logging_setup.py        # Dual logging (terminal + file)
 │   ├── data_processing/
@@ -82,13 +84,18 @@ SGTR-RL/
 │   └── scripts/
 │       ├── train.py                # Main training entry point
 │       ├── extract_from_eval.py    # Extract training data from .eval files
+│       ├── download_hf_data.py     # Download eval data from HuggingFace
 │       ├── eval_baseline.py        # Evaluate untrained model on any dataset
+│       ├── prepare_mmlu.py         # Prepare MMLU benchmark data
+│       ├── plot_cross_evals.py     # Cross-eval analysis plots
+│       ├── dry_run.py              # Simulate training locally (no GPU)
 │       ├── prepare_data.py         # Build prompts from raw generation data
 │       └── evaluate.py             # Run eval tasks on trained checkpoint
-├── experiments/                    # One YAML config per experiment
-├── scripts/                        # Plotting and analysis scripts
+├── experiments/                    # One YAML config per experiment (01-22)
+├── analysis/                       # Log parsing, plotting, Jupyter notebook
 ├── data/                           # Training data (gitignored)
-└── results/                        # Run outputs: logs, metrics, predictions (gitignored)
+├── results/                        # Run outputs: logs, metrics, predictions (gitignored)
+└── tests/                          # Unit tests
 ```
 
 ## Training Data Formats
@@ -125,3 +132,7 @@ Copy `.env.template` to `.env` and fill in:
 | `TINKER_API_KEY` | For Tinker backend | Managed GPU training |
 | `WANDB_API_KEY` | For W&B logging | Experiment tracking |
 | `TOGETHER_API_KEY` | For Together eval backend | Model inference for evaluation |
+
+## Documentation
+
+See [`docs/CODEBASE.md`](docs/CODEBASE.md) for detailed codebase reference including config schema, data pipeline, and development guide.

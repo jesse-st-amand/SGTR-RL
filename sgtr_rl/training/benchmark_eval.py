@@ -4,21 +4,16 @@ Provides configurable benchmark evals that run alongside the existing
 validation eval loop. Mirrors patterns from eval.py.
 """
 
+import functools
 import json
 import logging
 import random
 import re
 from pathlib import Path
 
+from sgtr_rl.training.utils import flip_target, load_jsonl
+
 logger = logging.getLogger(__name__)
-
-# Module-level cache: data_file path -> list of items
-_benchmark_cache: dict[str, list[dict]] = {}
-
-
-def _flip_target(target: str) -> str:
-    """Swap "1"<->"2" for label-flipping experiments."""
-    return {"1": "2", "2": "1"}.get(target, target)
 
 
 def _subsample(data: list[dict], num_samples: int | None, seed: int = 42) -> list[dict]:
@@ -29,22 +24,48 @@ def _subsample(data: list[dict], num_samples: int | None, seed: int = 42) -> lis
     return rng.sample(data, num_samples)
 
 
+@functools.lru_cache(maxsize=32)
+def _load_benchmark_cached(path: str) -> tuple[dict, ...]:
+    """Load and cache benchmark JSONL data. Returns tuple for hashability."""
+    items = load_jsonl(path)
+    logger.info(f"Loaded {len(items)} benchmark items from {path}")
+    return tuple(items)
+
+
 def load_benchmark_data(path: str) -> list[dict]:
     """Load benchmark JSONL data, caching by path."""
-    if path in _benchmark_cache:
-        return _benchmark_cache[path]
-    items = []
-    with open(path, "r") as f:
-        for line in f:
-            if line.strip():
-                items.append(json.loads(line))
-    _benchmark_cache[path] = items
-    logger.info(f"Loaded {len(items)} benchmark items from {path}")
-    return items
+    return list(_load_benchmark_cached(path))
+
+
+def _filter_by_model(data: list[dict], model: str) -> list[dict]:
+    """Filter SGTR eval data to only samples involving a specific 'other' model.
+
+    Matches on metadata fields: treatment_name_2 (PW) or treatment_name (IND, non-control).
+    """
+    filtered = []
+    for item in data:
+        meta = item.get("metadata", {})
+        # PW format: treatment_name_2 is the "other" model
+        t2 = meta.get("treatment_name_2", "")
+        if t2 == model:
+            filtered.append(item)
+            continue
+        # IND format: treatment_name is the model, and it's not control
+        t1 = meta.get("treatment_name", "")
+        is_control = meta.get("is_control", False)
+        if t1 == model and not is_control:
+            filtered.append(item)
+            continue
+        # IND control samples: keep them (they're the evaluator's own text)
+        if is_control:
+            filtered.append(item)
+    return filtered
 
 
 def format_mmlu_prompt(item: dict, cot: bool = False) -> str:
     """Format an MMLU item into a prompt string.
+
+    Uses the same format as inspect-ai's MMLU 0-shot template.
 
     Args:
         item: Dict with 'question', 'choices', 'subject'.
@@ -54,44 +75,54 @@ def format_mmlu_prompt(item: dict, cot: bool = False) -> str:
         Formatted prompt string.
     """
     choices_str = "\n".join(
-        f"{letter}. {text}"
+        f"{letter}) {text}"
         for letter, text in zip("ABCD", item["choices"])
     )
     if cot:
         instruction = (
-            'Think step by step, then provide your final answer as '
-            '"Answer: X" where X is A, B, C, or D.'
+            "Answer the following multiple choice question. The last line of "
+            "your response should be of the following format: 'ANSWER: $LETTER' "
+            "(without quotes) where LETTER is one of A,B,C,D. Think step by "
+            "step before answering."
         )
     else:
-        instruction = "Answer with a single letter (A, B, C, or D)."
+        instruction = (
+            "Answer the following multiple choice question. The entire content "
+            "of your response should be of the following format: 'ANSWER: $LETTER' "
+            "(without quotes) where LETTER is one of A,B,C,D."
+        )
 
-    return f"{item['question']}\n\n{choices_str}\n\n{instruction}"
+    return f"{instruction}\n\n{item['question']}\n\n{choices_str}"
 
 
 def extract_mmlu_answer(text: str) -> str | None:
     """Extract A/B/C/D answer from model completion.
 
-    Tries:
-    1. Explicit "Answer: X" pattern (case-insensitive)
-    2. Last standalone A/B/C/D in the text
-    3. Bare single-character response
+    Uses inspect-ai compatible extraction:
+    1. "ANSWER: X" pattern (inspect-ai format, case-insensitive)
+    2. Fallback: "Answer: X" or "Answer=X" pattern
+    3. Last standalone A/B/C/D in the text
+    4. Bare single-character response
     """
     text = text.strip()
 
-    # Strategy 1: explicit answer pattern
-    match = re.search(r"(?i)answer\s*[:=]\s*([A-Da-d])", text)
+    # Strategy 1: inspect-ai format "ANSWER: X"
+    match = re.search(r"(?i)ANSWER\s*:\s*([A-Da-d])", text)
     if match:
         return match.group(1).upper()
 
-    # Strategy 2: last standalone A-D
+    # Strategy 2: alternative "answer=X" pattern
+    match = re.search(r"(?i)answer\s*=\s*([A-Da-d])", text)
+    if match:
+        return match.group(1).upper()
+
+    # Strategy 3: last standalone A-D
     matches = re.findall(r"\b([A-Da-d])\b", text)
-    # Filter to only A-D (exclude common words like "a" in lowercase context)
-    # Use uppercase matches or matches at end of text
     abcd_matches = [m.upper() for m in matches if m.upper() in "ABCD"]
     if abcd_matches:
         return abcd_matches[-1]
 
-    # Strategy 3: bare single character
+    # Strategy 4: bare single character
     if text.upper() in ("A", "B", "C", "D"):
         return text.upper()
 
@@ -226,7 +257,7 @@ def evaluate_sgtr_benchmark(
         answer = _extract_answer(content)
         target = item["target"]
         if flip_targets:
-            target = _flip_target(target)
+            target = flip_target(target)
         fmt = item.get("metadata", {}).get("format", "unknown")
 
         is_correct = answer == target
@@ -344,6 +375,9 @@ def run_benchmark_evals(
         logger.info(f"Running benchmark eval: {cfg.name} (type={cfg.type}, epoch={epoch})")
 
         data = load_benchmark_data(cfg.data_file)
+        if cfg.filter_model:
+            data = _filter_by_model(data, cfg.filter_model)
+            logger.info(f"  Filtered to {len(data)} samples for model={cfg.filter_model}")
         data = _subsample(data, cfg.num_samples)
 
         if cfg.type == "sgtr":
@@ -390,8 +424,19 @@ def run_benchmark_evals(
 
         else:
             # MMLU (default)
+            # Limit max_tokens for non-CoT to prevent hidden reasoning
+            # (matches inspect-ai which uses max_tokens=5 for non-CoT MMLU)
+            if not cfg.cot:
+                from tinker_cookbook import types
+                mmlu_params = types.SamplingParams(
+                    max_tokens=16,
+                    stop=eval_params.stop,
+                    temperature=eval_params.temperature,
+                )
+            else:
+                mmlu_params = eval_params
             result = evaluate_benchmark(
-                data, sampling_client, renderer, eval_params, cot=cfg.cot,
+                data, sampling_client, renderer, mmlu_params, cot=cfg.cot,
             )
 
             # Log to console (A/B/C/D distribution)

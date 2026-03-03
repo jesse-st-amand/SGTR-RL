@@ -8,7 +8,8 @@ from pathlib import Path
 from sgtr_rl.training.train_config import TrainingConfig
 from sgtr_rl.training.reward import sgtr_binary_reward, _extract_answer
 from sgtr_rl.training.eval import run_val_eval
-from sgtr_rl.training.benchmark_eval import run_benchmark_evals, _flip_target
+from sgtr_rl.training.benchmark_eval import run_benchmark_evals
+from sgtr_rl.training.utils import flip_target, load_jsonl
 from sgtr_rl.data_processing.validate_data import validate_training_data
 
 logger = logging.getLogger(__name__)
@@ -54,15 +55,8 @@ class LocalGRPOTrainer:
         """Load JSONL prompt dataset into an HF Dataset."""
         from datasets import Dataset
 
-        records = []
-        with open(self.config.train_file, "r") as f:
-            for line in f:
-                record = json.loads(line)
-                records.append({
-                    "prompt": record["prompt"],
-                    "target": record["target"],
-                })
-
+        raw = load_jsonl(self.config.train_file)
+        records = [{"prompt": r["prompt"], "target": r["target"]} for r in raw]
         self.train_dataset = Dataset.from_list(records)
         print(f"Loaded {len(self.train_dataset)} training prompts")
 
@@ -74,11 +68,8 @@ class LocalGRPOTrainer:
         prompt from the dataset and delegate to ``sgtr_binary_reward``.
         """
         # Build a lookup from prompt text to target
-        prompt_to_target: dict[str, str] = {}
-        with open(self.config.train_file, "r") as f:
-            for line in f:
-                record = json.loads(line)
-                prompt_to_target[record["prompt"]] = record["target"]
+        raw = load_jsonl(self.config.train_file)
+        prompt_to_target: dict[str, str] = {r["prompt"]: r["target"] for r in raw}
 
         def reward_fn(completions, **kwargs):
             prompts = kwargs.get("prompts", [])
@@ -152,13 +143,10 @@ class TinkerRLTrainer:
 
     def _load_prompts(self) -> list[dict]:
         """Load prompt dataset from JSONL."""
-        prompts = []
-        with open(self.config.train_file, "r") as f:
-            for line in f:
-                prompts.append(json.loads(line))
+        prompts = load_jsonl(self.config.train_file)
         if self.config.flip_targets:
             for item in prompts:
-                item["target"] = _flip_target(item["target"])
+                item["target"] = flip_target(item["target"])
             logger.info("Applied flip_targets to training data")
         logger.info(f"Loaded {len(prompts)} training prompts")
         return prompts
@@ -202,14 +190,10 @@ class TinkerRLTrainer:
         """Load validation dataset from JSONL, if configured."""
         if not self.config.val_file or not Path(self.config.val_file).exists():
             return []
-        prompts = []
-        with open(self.config.val_file, "r") as f:
-            for line in f:
-                if line.strip():
-                    prompts.append(json.loads(line))
+        prompts = load_jsonl(self.config.val_file)
         if self.config.flip_targets:
             for item in prompts:
-                item["target"] = _flip_target(item["target"])
+                item["target"] = flip_target(item["target"])
             logger.info("Applied flip_targets to validation data")
         logger.info(f"Loaded {len(prompts)} validation prompts")
         return prompts

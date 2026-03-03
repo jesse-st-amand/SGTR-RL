@@ -3,12 +3,13 @@
 import pytest
 
 from sgtr_rl.training.benchmark_eval import (
-    _flip_target,
+    _filter_by_model,
     _subsample,
     extract_mmlu_answer,
     format_mmlu_prompt,
     should_run_benchmark,
 )
+from sgtr_rl.training.utils import flip_target
 
 SAMPLE_ITEM = {
     "question": "What is the capital of France?",
@@ -26,16 +27,24 @@ class TestFormatMMLUPrompt:
     def test_format_mmlu_prompt_nocot(self):
         prompt = format_mmlu_prompt(SAMPLE_ITEM, cot=False)
         assert "What is the capital of France?" in prompt
-        assert "A. Berlin" in prompt
-        assert "B. Madrid" in prompt
-        assert "C. Paris" in prompt
-        assert "D. Rome" in prompt
-        assert "single letter" in prompt
+        assert "A) Berlin" in prompt
+        assert "B) Madrid" in prompt
+        assert "C) Paris" in prompt
+        assert "D) Rome" in prompt
+        assert "ANSWER: $LETTER" in prompt
+        assert "entire content" in prompt
 
     def test_format_mmlu_prompt_cot(self):
         prompt = format_mmlu_prompt(SAMPLE_ITEM, cot=True)
         assert "step by step" in prompt.lower()
-        assert "A. Berlin" in prompt
+        assert "A) Berlin" in prompt
+        assert "last line" in prompt
+
+    def test_format_mmlu_instruction_before_question(self):
+        prompt = format_mmlu_prompt(SAMPLE_ITEM, cot=False)
+        instruction_pos = prompt.index("Answer the following")
+        question_pos = prompt.index("What is the capital")
+        assert instruction_pos < question_pos
 
 
 # ---------------------------------------------------------------------------
@@ -44,9 +53,11 @@ class TestFormatMMLUPrompt:
 
 class TestExtractMMLUAnswer:
     @pytest.mark.parametrize("text,expected", [
+        ("ANSWER: B", "B"),
         ("Answer: B", "B"),
         ("answer: c", "C"),
         ("ANSWER=D", "D"),
+        ("ANSWER: A", "A"),
     ])
     def test_extract_mmlu_answer_explicit(self, text, expected):
         assert extract_mmlu_answer(text) == expected
@@ -72,20 +83,20 @@ class TestExtractMMLUAnswer:
 # ---------------------------------------------------------------------------
 
 # ---------------------------------------------------------------------------
-# _flip_target
+# flip_target (from utils)
 # ---------------------------------------------------------------------------
 
 class TestFlipTarget:
     def test_flip_target_1_to_2(self):
-        assert _flip_target("1") == "2"
+        assert flip_target("1") == "2"
 
     def test_flip_target_2_to_1(self):
-        assert _flip_target("2") == "1"
+        assert flip_target("2") == "1"
 
     def test_flip_target_other_unchanged(self):
-        assert _flip_target("A") == "A"
-        assert _flip_target("") == ""
-        assert _flip_target("3") == "3"
+        assert flip_target("A") == "A"
+        assert flip_target("") == ""
+        assert flip_target("3") == "3"
 
 
 # ---------------------------------------------------------------------------
@@ -157,3 +168,43 @@ class TestShouldRunBenchmark:
     def test_should_run_end_only(self):
         assert should_run_benchmark("end_only", 1, epoch=5, total_epochs=10) is False
         assert should_run_benchmark("end_only", 1, epoch=10, total_epochs=10) is True
+
+
+# ---------------------------------------------------------------------------
+# _filter_by_model
+# ---------------------------------------------------------------------------
+
+class TestFilterByModel:
+    def test_filter_pw_by_treatment_name_2(self):
+        data = [
+            {"prompt": "a", "metadata": {"treatment_name_1": "ll-3.1-8b", "treatment_name_2": "qwen-2.5-7b"}},
+            {"prompt": "b", "metadata": {"treatment_name_1": "ll-3.1-8b", "treatment_name_2": "haiku-3.5"}},
+            {"prompt": "c", "metadata": {"treatment_name_1": "ll-3.1-8b", "treatment_name_2": "qwen-2.5-7b"}},
+        ]
+        result = _filter_by_model(data, "qwen-2.5-7b")
+        assert len(result) == 2
+        assert result[0]["prompt"] == "a"
+        assert result[1]["prompt"] == "c"
+
+    def test_filter_ind_keeps_control_and_matching_treatment(self):
+        data = [
+            {"prompt": "ctrl", "metadata": {"treatment_name": "ll-3.1-8b", "is_control": True}},
+            {"prompt": "qwen", "metadata": {"treatment_name": "qwen-2.5-7b", "is_control": False}},
+            {"prompt": "haiku", "metadata": {"treatment_name": "haiku-3.5", "is_control": False}},
+        ]
+        result = _filter_by_model(data, "qwen-2.5-7b")
+        assert len(result) == 2
+        assert result[0]["prompt"] == "ctrl"
+        assert result[1]["prompt"] == "qwen"
+
+    def test_filter_returns_empty_for_no_match(self):
+        data = [
+            {"prompt": "a", "metadata": {"treatment_name_1": "ll-3.1-8b", "treatment_name_2": "haiku-3.5"}},
+        ]
+        result = _filter_by_model(data, "gpt-4o")
+        assert len(result) == 0
+
+    def test_filter_no_metadata(self):
+        data = [{"prompt": "a"}]
+        result = _filter_by_model(data, "qwen-2.5-7b")
+        assert len(result) == 0
