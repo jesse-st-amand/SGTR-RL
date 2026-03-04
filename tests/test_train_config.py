@@ -1,15 +1,13 @@
-"""Tests for sgtr_rl.training.train_config."""
+"""Tests for sgtr_rl.config."""
 
 import pytest
 import yaml
 from pydantic import ValidationError
 
-from sgtr_rl.training.train_config import (
-    BenchmarkEvalConfig,
+from sgtr_rl.config import (
     TrainingConfig,
     load_training_config,
 )
-
 
 # ---------------------------------------------------------------------------
 # load_training_config
@@ -20,12 +18,9 @@ class TestLoadTrainingConfig:
         config = {
             "experiment_name": "test_exp",
             "algorithm": "grpo",
-            "backend": "tinker",
             "model": {
                 "name": "meta-llama/Llama-3.1-8B-Instruct",
                 "lora_rank": 16,
-                "lora_alpha": 32,
-                "lora_dropout": 0.1,
             },
             "hyperparameters": {
                 "learning_rate": 1e-4,
@@ -38,10 +33,6 @@ class TestLoadTrainingConfig:
             "data": {
                 "train_file": "train.jsonl",
                 "val_file": "val.jsonl",
-            },
-            "checkpointing": {
-                "save_steps": 100,
-                "eval_steps": 100,
             },
             "wandb_project": "test-project",
         }
@@ -56,7 +47,6 @@ class TestLoadTrainingConfig:
         assert cfg.lora_rank == 16
         assert cfg.num_rollouts_per_prompt == 8
         assert cfg.wandb_project == "test-project"
-        assert cfg.save_steps == 100
 
     def test_load_minimal_config(self, tmp_path):
         """Missing optional sections use defaults."""
@@ -139,31 +129,6 @@ class TestLoadTrainingConfig:
         assert mmlu_bench.flip_targets is False
         assert mmlu_bench.num_samples == 20
 
-    def test_load_flip_targets_training(self, tmp_path):
-        config = {
-            "experiment_name": "flip_test",
-            "data": {
-                "train_file": "train.jsonl",
-                "val_file": "val.jsonl",
-                "flip_targets": True,
-            },
-        }
-        path = tmp_path / "config.yaml"
-        with open(path, "w") as f:
-            yaml.dump(config, f)
-
-        cfg = load_training_config(str(path))
-        assert cfg.flip_targets is True
-
-    def test_flip_targets_defaults_false(self, tmp_path):
-        config = {"experiment_name": "no_flip"}
-        path = tmp_path / "config.yaml"
-        with open(path, "w") as f:
-            yaml.dump(config, f)
-
-        cfg = load_training_config(str(path))
-        assert cfg.flip_targets is False
-
     def test_load_missing_file_raises(self, tmp_path):
         with pytest.raises(FileNotFoundError):
             load_training_config(str(tmp_path / "nonexistent.yaml"))
@@ -231,9 +196,11 @@ class TestTrainingConfigDefaults:
         assert cfg.learning_rate == 5e-5
         assert cfg.num_epochs == 3
         assert cfg.seed == 42
-        assert cfg.bf16 is True
         assert cfg.benchmark_evals == []
         assert cfg.wandb_project is None
+        assert cfg.prompt_field == "prompt"
+        assert cfg.target_field == "target"
+        assert cfg.id_field == "id"
 
 
 # ---------------------------------------------------------------------------

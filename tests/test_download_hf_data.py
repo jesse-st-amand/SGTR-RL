@@ -1,13 +1,11 @@
-"""Tests for sgtr_rl.scripts.download_hf_data."""
+"""Tests for scripts.prepare_data (download/extract utilities)."""
 
-import pytest
 
-from sgtr_rl.scripts.download_hf_data import (
+from scripts.prepare_data import (
     detect_format,
     filter_files,
     parse_eval_filename,
 )
-
 
 # Sample filenames from real data
 PW_FILENAME = (

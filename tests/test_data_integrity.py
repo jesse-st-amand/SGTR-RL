@@ -2,6 +2,10 @@
 
 All tests are marked @pytest.mark.datasci and skip if data files don't exist
 (so CI without data still passes).
+
+Note: These tests support both the old nested metadata format and the new flat
+format. Real data files may be in either format depending on whether they've
+been re-extracted with the updated prepare_data.py script.
 """
 
 import json
@@ -9,10 +13,10 @@ from pathlib import Path
 
 import pytest
 
-from sgtr_rl.data_processing.validate_data import validate_training_data
+from sgtr_rl.data import validate_training_data
 
-PW_TRAIN = Path("data/training_data/sharegpt_pw/train.jsonl")
-PW_VAL = Path("data/training_data/sharegpt_pw/val.jsonl")
+PW_TRAIN = Path("data/training_data/llama8b_pw/train.jsonl")
+PW_VAL = Path("data/training_data/llama8b_pw/val.jsonl")
 MMLU_20 = Path("data/benchmarks/mmlu_20.jsonl")
 MMLU_500 = Path("data/benchmarks/mmlu_500.jsonl")
 
@@ -35,6 +39,18 @@ def _load_jsonl(path: Path) -> list[dict]:
     return records
 
 
+def _get_record_id(rec: dict) -> str:
+    """Get the record ID, supporting both flat and nested formats."""
+    if "id" in rec:
+        return rec["id"]
+    return rec.get("metadata", {}).get("uuid", "")
+
+
+def _is_flat_format(records: list[dict]) -> bool:
+    """Check if records use the flat schema (has 'id' at top level)."""
+    return len(records) > 0 and "id" in records[0]
+
+
 # ---------------------------------------------------------------------------
 # PW data validation
 # ---------------------------------------------------------------------------
@@ -43,17 +59,20 @@ def _load_jsonl(path: Path) -> list[dict]:
 @pw_data_exists
 class TestPWDataIntegrity:
     def test_pw_data_valid(self):
-        """Full validation passes on real PW data."""
+        """Full validation passes on real PW data (flat format only)."""
+        train = _load_jsonl(PW_TRAIN)
+        if not _is_flat_format(train):
+            pytest.skip("Data uses old nested format — re-extract with prepare_data.py")
         result = validate_training_data(str(PW_TRAIN), str(PW_VAL))
         assert result["format"] == "pw"
 
-    def test_pw_no_uuid_leakage(self):
-        """Zero UUID overlap between actual train/val."""
+    def test_pw_no_id_leakage(self):
+        """Zero ID overlap between actual train/val."""
         train = _load_jsonl(PW_TRAIN)
         val = _load_jsonl(PW_VAL)
-        train_uuids = {r["metadata"]["uuid"] for r in train}
-        val_uuids = {r["metadata"]["uuid"] for r in val}
-        assert len(train_uuids & val_uuids) == 0
+        train_ids = {_get_record_id(r) for r in train}
+        val_ids = {_get_record_id(r) for r in val}
+        assert len(train_ids & val_ids) == 0
 
     def test_pw_target_balance(self):
         """Both targets '1' and '2' present in train and val."""

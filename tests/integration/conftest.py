@@ -12,17 +12,17 @@ from unittest.mock import MagicMock
 import numpy as np
 import pytest
 
-
 # ---------------------------------------------------------------------------
-# Record builders (mirrors tests/conftest.py)
+# Record builders (flat schema, mirrors tests/conftest.py)
 # ---------------------------------------------------------------------------
 
-def _pw_record(uuid: str, target: str, **meta) -> dict:
-    metadata = {"uuid": uuid, "format": "pw", **meta}
+def _pw_record(id: str, target: str, **extra) -> dict:
     return {
-        "prompt": f"Which response did you write? (uuid={uuid})",
+        "prompt": f"Which response did you write? (id={id})",
         "target": target,
-        "metadata": metadata,
+        "id": id,
+        "format": "pw",
+        **extra,
     }
 
 
@@ -45,7 +45,7 @@ def patch_tinker_modules(
     """Inject fake tinker/tinker_cookbook modules into sys.modules.
 
     Args:
-        answer_text: What the mock model "generates" (parsed by _extract_answer).
+        answer_text: What the mock model "generates" (parsed by extract_answer).
         num_sequences: Sequences per sample() call (= group_size for GRPO).
         logprob_value: Logprob value returned by forward_backward (for SFT
             accuracy testing; values > log(0.5) ≈ -0.693 count as correct).
@@ -264,25 +264,43 @@ def patch_tinker_modules(
 
 
 # ---------------------------------------------------------------------------
+# Helper: build TinkerContext from mocks
+# ---------------------------------------------------------------------------
+
+def _build_ctx(mocks):
+    """Build a TinkerContext from the mock objects returned by patch_tinker_modules."""
+    from sgtr_rl.tinker import TinkerContext
+
+    return TinkerContext(
+        training_client=mocks["training_client"],
+        renderer=mocks["renderer"],
+        tokenizer=MagicMock(name="tokenizer"),
+        eval_params=MagicMock(name="eval_params"),
+        adam_params=MagicMock(name="adam_params"),
+        ml_logger=mocks["ml_logger"],
+    )
+
+
+# ---------------------------------------------------------------------------
 # Data fixtures
 # ---------------------------------------------------------------------------
 
 @pytest.fixture()
 def tiny_train_val_files(tmp_path):
-    """Create tiny PW train/val JSONL files.
+    """Create tiny PW train/val JSONL files (flat schema).
 
-    Train: 4 records (2 UUIDs x 2 orderings), targets alternate 1/2.
-    Val: 2 records (1 UUID x 2 orderings).
+    Train: 4 records (2 IDs x 2 orderings), targets alternate 1/2.
+    Val: 2 records (1 ID x 2 orderings).
     """
     train_records = [
-        _pw_record("train-uuid-1", "1"),
-        _pw_record("train-uuid-1", "2"),
-        _pw_record("train-uuid-2", "1"),
-        _pw_record("train-uuid-2", "2"),
+        _pw_record("train-id-1", "1"),
+        _pw_record("train-id-1", "2"),
+        _pw_record("train-id-2", "1"),
+        _pw_record("train-id-2", "2"),
     ]
     val_records = [
-        _pw_record("val-uuid-1", "1"),
-        _pw_record("val-uuid-1", "2"),
+        _pw_record("val-id-1", "1"),
+        _pw_record("val-id-1", "2"),
     ]
     train_path = tmp_path / "train.jsonl"
     val_path = tmp_path / "val.jsonl"
@@ -292,15 +310,23 @@ def tiny_train_val_files(tmp_path):
 
 
 @pytest.fixture()
+def tiny_prompts(tiny_train_val_files):
+    """Load tiny train/val prompts as lists of dicts."""
+    from sgtr_rl.data import load_jsonl
+
+    train_path, val_path = tiny_train_val_files
+    return load_jsonl(train_path), load_jsonl(val_path)
+
+
+@pytest.fixture()
 def sft_config(tmp_path, tiny_train_val_files):
     """TrainingConfig for SFT with tiny data."""
-    from sgtr_rl.training.train_config import TrainingConfig
+    from sgtr_rl.config import TrainingConfig
 
     train_file, val_file = tiny_train_val_files
     run_dir = str(tmp_path / "run")
     return TrainingConfig(
         algorithm="sft",
-        backend="tinker",
         experiment_name="test_sft",
         model_name="test-model",
         num_epochs=2,
@@ -314,13 +340,12 @@ def sft_config(tmp_path, tiny_train_val_files):
 @pytest.fixture()
 def grpo_config(tmp_path, tiny_train_val_files):
     """TrainingConfig for GRPO with tiny data."""
-    from sgtr_rl.training.train_config import TrainingConfig
+    from sgtr_rl.config import TrainingConfig
 
     train_file, val_file = tiny_train_val_files
     run_dir = str(tmp_path / "run")
     return TrainingConfig(
         algorithm="grpo",
-        backend="tinker",
         experiment_name="test_grpo",
         model_name="test-model",
         num_epochs=2,

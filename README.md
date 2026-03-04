@@ -20,19 +20,13 @@ cp .env.template .env           # fill in TINKER_API_KEY, WANDB_API_KEY
 **1. Prepare data** — extract SGTR prompts from eval files:
 ```bash
 # Download from HuggingFace and extract training data:
-python -m sgtr_rl.scripts.download_hf_data \
-    --evaluator ll-3.1-8b --dataset sharegpt --name llama8b --extract
-
-# Or from local .eval files:
-python -m sgtr_rl.scripts.extract_from_eval \
-    --eval_dir data/original/llama8b \
-    --output data/training_data/sharegpt_pw/ \
-    --format pw
+python -m scripts.prepare_data \
+    --evaluator ll-3.1-8b --dataset sharegpt --name llama8b
 ```
 
 **2. Train** — SFT or GRPO with LoRA on Tinker:
 ```bash
-python -m sgtr_rl.scripts.train \
+python -m scripts.train \
     --config experiments/15_sft_pw_rec_vs_qwen/config.yaml
 ```
 
@@ -45,72 +39,47 @@ python -m sgtr_rl.scripts.train \
 ## Current Results
 
 SFT experiments 15-22 training Llama-3.1-8B on pairwise and individual SGTR across multiple "other" models (Qwen-2.5-7B, Haiku-3.5, GPT-4o, Llama-70B, Claude Opus):
-- **90%+ val accuracy** on held-out UUIDs across all model pairs
+- **90%+ val accuracy** on held-out IDs across all model pairs
 - Untrained baseline: ~45% (below chance)
-- Cross-format generalisation: training on pairwise transfers to individual and vice versa
-- Cross-domain generalisation: improvements transfer across ShareGPT, WikiSum, PKU, BigCode
 - See `results/batch_15-22_sft_cross_evals/` for plots and analysis
-
-## Architecture
-
-Composed via a single YAML config per experiment:
-
-| Dimension          | Options                                    |
-|--------------------|--------------------------------------------|
-| Training algorithm | `sft` (implemented) \| `grpo` (implemented) |
-| Training backend   | `tinker` (implemented) \| `local` (TRL)    |
-| Data format        | `pw` (pairwise) \| `ind` (individual) \| `ind_cot` (individual + CoT) |
 
 ## Project Structure
 
 ```
 SGTR-RL/
-├── sgtr_rl/
-│   ├── training/
-│   │   ├── sft_trainer.py          # TinkerSFTTrainer (cross-entropy loss)
-│   │   ├── grpo_trainer.py         # TinkerRLTrainer + LocalGRPOTrainer
-│   │   ├── eval.py                 # Shared val evaluation (accuracy, NLL, predictions)
-│   │   ├── train_config.py         # TrainingConfig dataclass + YAML loader
-│   │   ├── reward.py               # Binary reward (extract "1"/"2", compare to target)
-│   │   ├── benchmark_eval.py       # MMLU + SGTR cross-eval during training
-│   │   ├── plot_summary.py         # Auto-generated training summary plots
-│   │   ├── run_dir.py              # Structured run directory creation
-│   │   └── logging_setup.py        # Dual logging (terminal + file)
-│   ├── data_processing/
-│   │   ├── validate_data.py        # Train/val integrity checks (UUID overlap, schema)
-│   │   └── prompt_builder.py       # Build SGTR prompts from raw generation data
-│   ├── evaluation/
-│   │   └── evaluator.py            # Checkpoint evaluation via inspect-ai
-│   └── scripts/
-│       ├── train.py                # Main training entry point
-│       ├── extract_from_eval.py    # Extract training data from .eval files
-│       ├── download_hf_data.py     # Download eval data from HuggingFace
-│       ├── eval_baseline.py        # Evaluate untrained model on any dataset
-│       ├── prepare_mmlu.py         # Prepare MMLU benchmark data
-│       ├── plot_cross_evals.py     # Cross-eval analysis plots
-│       ├── dry_run.py              # Simulate training locally (no GPU)
-│       ├── prepare_data.py         # Build prompts from raw generation data
-│       └── evaluate.py             # Run eval tasks on trained checkpoint
-├── experiments/                    # One YAML config per experiment (01-22)
-├── analysis/                       # Log parsing, plotting, Jupyter notebook
-├── data/                           # Training data (gitignored)
-├── results/                        # Run outputs: logs, metrics, predictions (gitignored)
-└── tests/                          # Unit tests
+├── sgtr_rl/                       # Flat, training-focused package
+│   ├── config.py                  # TrainingConfig + YAML loader
+│   ├── pipeline.py                # run_training() orchestration
+│   ├── sft.py                     # train_sft() function
+│   ├── grpo.py                    # train_grpo() function
+│   ├── tinker.py                  # TinkerContext + setup_tinker()
+│   ├── answer.py                  # extract_answer (1/2 extraction)
+│   ├── reward.py                  # Binary reward function
+│   ├── data.py                    # Data loading + validation
+│   ├── eval.py                    # Val evaluation (accuracy, NLL)
+│   ├── benchmarks.py              # MMLU + SGTR cross-eval
+│   ├── runs.py                    # Run directory management
+│   ├── plotting.py                # Summary plot generation
+│   └── logging_setup.py           # Dual logging (terminal + file)
+├── scripts/                       # CLI entry points
+│   ├── train.py                   # Main training entry point
+│   ├── prepare_data.py            # Download + extract training data
+│   ├── prepare_mmlu.py            # Prepare MMLU benchmark data
+│   └── plot_cross_evals.py        # Cross-eval analysis plots
+├── experiments/                   # One YAML config per experiment (14-22)
+├── data/                          # Training data (gitignored)
+├── results/                       # Run outputs: logs, metrics, predictions (gitignored)
+└── tests/                         # Unit and integration tests
 ```
 
-## Training Data Formats
+## Training Data Format
 
-**Pairwise (PW):**
+Flat JSON schema:
 ```json
-{"prompt": "Below are two responses... Which one did you write?", "target": "1", "metadata": {"uuid": "...", "format": "pw"}}
+{"prompt": "...", "target": "1", "id": "abc-123", "format": "pw", "opponent_model": "qwen-2.5-7b"}
 ```
 
-**Individual (IND):**
-```json
-{"prompt": "Did you write this response? Answer 1 for yes, 2 for no.", "target": "1", "metadata": {"uuid": "...", "format": "ind"}}
-```
-
-Targets are always `"1"` or `"2"`. For PW format, each UUID has exactly 2 records (both response orderings), and train/val splits are done at the UUID level to prevent leakage.
+Targets are always `"1"` or `"2"`. For PW format, each ID has exactly 2 records (both response orderings), and train/val splits are done at the ID level to prevent leakage.
 
 ## Dependencies
 

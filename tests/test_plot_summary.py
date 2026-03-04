@@ -1,4 +1,4 @@
-"""Tests for sgtr_rl.training.plot_summary."""
+"""Tests for sgtr_rl.plotting."""
 
 import json
 
@@ -6,8 +6,7 @@ import numpy as np
 import pytest
 import yaml
 
-from sgtr_rl.training.plot_summary import _build_title, _smooth, generate_summary_plot
-
+from sgtr_rl.plotting import _build_title, _smooth, generate_summary_plot
 
 # ---------------------------------------------------------------------------
 # _build_title

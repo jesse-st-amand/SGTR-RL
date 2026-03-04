@@ -1,15 +1,15 @@
-"""Tests for sgtr_rl.training.benchmark_eval."""
+"""Tests for sgtr_rl.benchmarks."""
 
 import pytest
 
-from sgtr_rl.training.benchmark_eval import (
+from sgtr_rl.benchmarks import (
     _filter_by_model,
     _subsample,
     extract_mmlu_answer,
     format_mmlu_prompt,
     should_run_benchmark,
 )
-from sgtr_rl.training.utils import flip_target
+from sgtr_rl.data import flip_target
 
 SAMPLE_ITEM = {
     "question": "What is the capital of France?",
@@ -79,11 +79,7 @@ class TestExtractMMLUAnswer:
 
 
 # ---------------------------------------------------------------------------
-# should_run_benchmark
-# ---------------------------------------------------------------------------
-
-# ---------------------------------------------------------------------------
-# flip_target (from utils)
+# flip_target (from data)
 # ---------------------------------------------------------------------------
 
 class TestFlipTarget:
@@ -158,7 +154,6 @@ class TestShouldRunBenchmark:
         assert should_run_benchmark("every_N_epochs", 3, epoch=4, total_epochs=10) is False
 
     def test_should_run_every_5_epochs_literal(self):
-        # Config files use "every_5_epochs" not "every_N_epochs"
         assert should_run_benchmark("every_5_epochs", 5, epoch=5, total_epochs=20) is True
         assert should_run_benchmark("every_5_epochs", 5, epoch=10, total_epochs=20) is True
         assert should_run_benchmark("every_5_epochs", 5, epoch=20, total_epochs=20) is True
@@ -171,26 +166,26 @@ class TestShouldRunBenchmark:
 
 
 # ---------------------------------------------------------------------------
-# _filter_by_model
+# _filter_by_model (flat schema)
 # ---------------------------------------------------------------------------
 
 class TestFilterByModel:
-    def test_filter_pw_by_treatment_name_2(self):
+    def test_filter_pw_by_opponent_model(self):
         data = [
-            {"prompt": "a", "metadata": {"treatment_name_1": "ll-3.1-8b", "treatment_name_2": "qwen-2.5-7b"}},
-            {"prompt": "b", "metadata": {"treatment_name_1": "ll-3.1-8b", "treatment_name_2": "haiku-3.5"}},
-            {"prompt": "c", "metadata": {"treatment_name_1": "ll-3.1-8b", "treatment_name_2": "qwen-2.5-7b"}},
+            {"prompt": "a", "opponent_model": "qwen-2.5-7b"},
+            {"prompt": "b", "opponent_model": "haiku-3.5"},
+            {"prompt": "c", "opponent_model": "qwen-2.5-7b"},
         ]
         result = _filter_by_model(data, "qwen-2.5-7b")
         assert len(result) == 2
         assert result[0]["prompt"] == "a"
         assert result[1]["prompt"] == "c"
 
-    def test_filter_ind_keeps_control_and_matching_treatment(self):
+    def test_filter_ind_keeps_control_and_matching(self):
         data = [
-            {"prompt": "ctrl", "metadata": {"treatment_name": "ll-3.1-8b", "is_control": True}},
-            {"prompt": "qwen", "metadata": {"treatment_name": "qwen-2.5-7b", "is_control": False}},
-            {"prompt": "haiku", "metadata": {"treatment_name": "haiku-3.5", "is_control": False}},
+            {"prompt": "ctrl", "is_control": True},
+            {"prompt": "qwen", "opponent_model": "qwen-2.5-7b"},
+            {"prompt": "haiku", "opponent_model": "haiku-3.5"},
         ]
         result = _filter_by_model(data, "qwen-2.5-7b")
         assert len(result) == 2
@@ -199,12 +194,12 @@ class TestFilterByModel:
 
     def test_filter_returns_empty_for_no_match(self):
         data = [
-            {"prompt": "a", "metadata": {"treatment_name_1": "ll-3.1-8b", "treatment_name_2": "haiku-3.5"}},
+            {"prompt": "a", "opponent_model": "haiku-3.5"},
         ]
         result = _filter_by_model(data, "gpt-4o")
         assert len(result) == 0
 
-    def test_filter_no_metadata(self):
+    def test_filter_no_opponent_model(self):
         data = [{"prompt": "a"}]
         result = _filter_by_model(data, "qwen-2.5-7b")
         assert len(result) == 0

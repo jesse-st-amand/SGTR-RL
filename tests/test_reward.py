@@ -1,12 +1,12 @@
-"""Tests for sgtr_rl.training.reward."""
+"""Tests for sgtr_rl.reward and sgtr_rl.answer."""
 
 import pytest
 
-from sgtr_rl.training.reward import _extract_answer, sgtr_binary_reward
-
+from sgtr_rl.answer import extract_answer
+from sgtr_rl.reward import sgtr_binary_reward
 
 # ---------------------------------------------------------------------------
-# _extract_answer
+# extract_answer
 # ---------------------------------------------------------------------------
 
 class TestExtractAnswer:
@@ -17,7 +17,7 @@ class TestExtractAnswer:
         ("The answer: 2", "2"),
     ])
     def test_extract_explicit_answer_pattern(self, text, expected):
-        assert _extract_answer(text) == expected
+        assert extract_answer(text) == expected
 
     @pytest.mark.parametrize("text,expected", [
         ("I think 1 but then 2", "2"),
@@ -25,14 +25,14 @@ class TestExtractAnswer:
         ("Maybe 2 or maybe 1", "1"),
     ])
     def test_extract_last_standalone_digit(self, text, expected):
-        assert _extract_answer(text) == expected
+        assert extract_answer(text) == expected
 
     @pytest.mark.parametrize("text,expected", [
         ("1", "1"),
         (" 2 ", "2"),
     ])
     def test_extract_bare_digit(self, text, expected):
-        assert _extract_answer(text) == expected
+        assert extract_answer(text) == expected
 
     @pytest.mark.parametrize("text", [
         "",
@@ -41,11 +41,11 @@ class TestExtractAnswer:
         "no digits here",
     ])
     def test_extract_no_answer(self, text):
-        assert _extract_answer(text) is None
+        assert extract_answer(text) is None
 
     def test_extract_cot_then_answer(self):
         text = "Let me think step by step... The writing style matches. Answer: 1"
-        assert _extract_answer(text) == "1"
+        assert extract_answer(text) == "1"
 
 
 # ---------------------------------------------------------------------------

@@ -1,10 +1,9 @@
-"""Tests for sgtr_rl.data_processing.validate_data."""
+"""Tests for sgtr_rl.data.validate_training_data."""
 
 import pytest
-
 from conftest import _ind_record, _pw_record, write_jsonl
-from sgtr_rl.data_processing.validate_data import validate_training_data
 
+from sgtr_rl.data import validate_training_data
 
 # ---------------------------------------------------------------------------
 # Baselines — valid data passes
@@ -32,26 +31,26 @@ class TestValidData:
 
 
 # ---------------------------------------------------------------------------
-# UUID leakage
+# ID leakage
 # ---------------------------------------------------------------------------
 
-class TestUUIDLeakage:
-    def test_uuid_overlap_raises(self, tmp_path):
-        """Same UUID in train and val must raise ValueError."""
-        shared_uuid = "leaked-uuid"
+class TestIDLeakage:
+    def test_id_overlap_raises(self, tmp_path):
+        """Same ID in train and val must raise ValueError."""
+        shared_id = "leaked-id"
         train = [
-            _pw_record(shared_uuid, "1"),
-            _pw_record(shared_uuid, "2"),
+            _pw_record(shared_id, "1"),
+            _pw_record(shared_id, "2"),
         ]
         val = [
-            _pw_record(shared_uuid, "1"),
-            _pw_record(shared_uuid, "2"),
+            _pw_record(shared_id, "1"),
+            _pw_record(shared_id, "2"),
         ]
         train_path = tmp_path / "train.jsonl"
         val_path = tmp_path / "val.jsonl"
         write_jsonl(train_path, train)
         write_jsonl(val_path, val)
-        with pytest.raises(ValueError, match="UUID leak"):
+        with pytest.raises(ValueError, match="ID leak"):
             validate_training_data(str(train_path), str(val_path))
 
 
@@ -61,7 +60,7 @@ class TestUUIDLeakage:
 
 class TestPWOrdering:
     def test_pw_missing_ordering_raises(self, tmp_path):
-        """PW UUID with only 1 record (missing flip) must raise."""
+        """PW ID with only 1 record (missing flip) must raise."""
         train = [_pw_record("u1", "1")]  # only 1 record instead of 2
         val = [
             _pw_record("v1", "1"),
@@ -82,12 +81,11 @@ class TestPWOrdering:
 class TestTargetValidation:
     def test_target_must_be_string(self, tmp_path):
         """Target=1 (int) instead of '1' (string) must fail target validation."""
-        # Build record manually to bypass builder's string typing
         train = [
-            {"prompt": "p", "target": 1, "metadata": {"uuid": "u1", "format": "ind"}},
-            {"prompt": "p", "target": "2", "metadata": {"uuid": "u2", "format": "ind"}},
+            {"prompt": "p", "target": 1, "id": "u1", "format": "ind"},
+            {"prompt": "p", "target": "2", "id": "u2", "format": "ind"},
         ]
-        val = [{"prompt": "p", "target": "1", "metadata": {"uuid": "v1", "format": "ind"}}]
+        val = [{"prompt": "p", "target": "1", "id": "v1", "format": "ind"}]
         train_path = tmp_path / "train.jsonl"
         val_path = tmp_path / "val.jsonl"
         write_jsonl(train_path, train)
@@ -113,7 +111,7 @@ class TestTargetValidation:
 
 class TestSchemaValidation:
     def test_missing_prompt_raises(self, tmp_path):
-        train = [{"target": "1", "metadata": {"uuid": "u1"}}]
+        train = [{"target": "1", "id": "u1"}]
         val = [_ind_record("v1", "1")]
         train_path = tmp_path / "train.jsonl"
         val_path = tmp_path / "val.jsonl"
@@ -122,24 +120,14 @@ class TestSchemaValidation:
         with pytest.raises(ValueError, match="missing required field 'prompt'"):
             validate_training_data(str(train_path), str(val_path))
 
-    def test_missing_metadata_raises(self, tmp_path):
+    def test_missing_id_raises(self, tmp_path):
         train = [{"prompt": "p", "target": "1"}]
         val = [_ind_record("v1", "1")]
         train_path = tmp_path / "train.jsonl"
         val_path = tmp_path / "val.jsonl"
         write_jsonl(train_path, train)
         write_jsonl(val_path, val)
-        with pytest.raises(ValueError, match="missing required field 'metadata'"):
-            validate_training_data(str(train_path), str(val_path))
-
-    def test_missing_uuid_raises(self, tmp_path):
-        train = [{"prompt": "p", "target": "1", "metadata": {"format": "ind"}}]
-        val = [_ind_record("v1", "1")]
-        train_path = tmp_path / "train.jsonl"
-        val_path = tmp_path / "val.jsonl"
-        write_jsonl(train_path, train)
-        write_jsonl(val_path, val)
-        with pytest.raises(ValueError, match="metadata missing 'uuid'"):
+        with pytest.raises(ValueError, match="missing required field 'id'"):
             validate_training_data(str(train_path), str(val_path))
 
     def test_empty_file_raises(self, tmp_path):
@@ -163,8 +151,8 @@ class TestSummary:
         result = validate_training_data(train_path, val_path)
         assert result["train_records"] == 4
         assert result["val_records"] == 4
-        assert result["train_uuids"] == 2
-        assert result["val_uuids"] == 2
+        assert result["train_ids"] == 2
+        assert result["val_ids"] == 2
         assert result["format"] == "pw"
         assert "1" in result["train_target_dist"]
         assert "2" in result["train_target_dist"]
