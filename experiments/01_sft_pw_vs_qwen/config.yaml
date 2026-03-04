@@ -27,12 +27,12 @@ benchmark_evals:
     type: mmlu
     data_file: data/benchmarks/mmlu_20.jsonl
     schedule: every_epoch
-    cot: false
+    cot: true
   mmlu_2000:
     type: mmlu
     data_file: data/benchmarks/mmlu_2000.jsonl
     schedule: end_only
-    cot: false
+    cot: true
   ind_rec_xeval:
     type: sgtr
     filter_model: auto

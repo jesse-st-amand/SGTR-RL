@@ -91,31 +91,31 @@ def format_mmlu_prompt(item: dict, cot: bool = False) -> str:
 def extract_mmlu_answer(text: str) -> str | None:
     """Extract A/B/C/D answer from model completion.
 
-    Uses inspect-ai compatible extraction:
-    1. "ANSWER: X" pattern (inspect-ai format, case-insensitive)
-    2. Fallback: "Answer: X" or "Answer=X" pattern
-    3. Last standalone A/B/C/D in the text
-    4. Bare single-character response
+    Uses inspect-ai compatible extraction with anti-cheating:
+    1. "ANSWER: X" pattern — reject if multiple ANSWER: lines disagree
+    2. Fallback: last standalone A/B/C/D, but reject if all 4 present
+    3. Bare single-character response
     """
     text = text.strip()
 
-    # Strategy 1: inspect-ai format "ANSWER: X"
-    match = re.search(r"(?i)ANSWER\s*:\s*([A-Da-d])", text)
-    if match:
-        return match.group(1).upper()
+    # Strategy 1: "ANSWER: X" pattern (inspect-ai format)
+    # Find ALL occurrences — reject if they disagree
+    answer_matches = re.findall(r"(?i)ANSWER\s*[:=]\s*([A-Da-d])", text)
+    if answer_matches:
+        unique = set(m.upper() for m in answer_matches)
+        if len(unique) == 1:
+            return unique.pop()
+        return None  # multiple different answers — invalid
 
-    # Strategy 2: alternative "answer=X" pattern
-    match = re.search(r"(?i)answer\s*=\s*([A-Da-d])", text)
-    if match:
-        return match.group(1).upper()
-
-    # Strategy 3: last standalone A-D
+    # Strategy 2: last standalone A-D, reject if all 4 letters present
     matches = re.findall(r"\b([A-Da-d])\b", text)
     abcd_matches = [m.upper() for m in matches if m.upper() in "ABCD"]
     if abcd_matches:
+        if len(set(abcd_matches)) >= 4:
+            return None  # all choices mentioned — not a real answer
         return abcd_matches[-1]
 
-    # Strategy 4: bare single character
+    # Strategy 3: bare single character
     if text.upper() in ("A", "B", "C", "D"):
         return text.upper()
 
@@ -351,6 +351,9 @@ def run_benchmark_evals(
     # Get a single sampling client for all benchmarks
     sampling_client = training_client.save_weights_and_get_sampling_client()
 
+    # Accumulate all metrics and log once to avoid W&B step-overwrite issue
+    all_metrics: dict[str, float] = {}
+
     for cfg in due:
         logger.info(f"Running benchmark eval: {cfg.name} (type={cfg.type}, epoch={epoch})")
 
@@ -376,14 +379,13 @@ def run_benchmark_evals(
                 f"?:{result['answers']['other']}}}"
             )
 
-            # Log to wandb
-            metrics = {
+            # Accumulate metrics
+            all_metrics.update({
                 f"benchmark/{cfg.name}/accuracy": result["accuracy"],
                 f"benchmark/{cfg.name}/answers_1_pct": result["answers"]["1"] / total,
                 f"benchmark/{cfg.name}/answers_2_pct": result["answers"]["2"] / total,
                 f"benchmark/{cfg.name}/answers_other_pct": result["answers"]["other"] / total,
-            }
-            ml_logger.log_metrics(metrics, step=step)
+            })
 
             # Save predictions
             if run_dir:
@@ -403,11 +405,11 @@ def run_benchmark_evals(
                 logger.debug(f"  benchmark predictions saved to {pred_path}")
 
         else:
-            # MMLU (default)
+            # MMLU
             if not cfg.cot:
                 from tinker import types
                 mmlu_params = types.SamplingParams(
-                    max_tokens=16,
+                    max_tokens=128,
                     stop=eval_params.stop,
                     temperature=eval_params.temperature,
                 )
@@ -427,16 +429,15 @@ def run_benchmark_evals(
                 f"?:{result['answers']['other']}}}"
             )
 
-            # Log to wandb
-            metrics = {
+            # Accumulate metrics
+            all_metrics.update({
                 f"benchmark/{cfg.name}/accuracy": result["accuracy"],
                 f"benchmark/{cfg.name}/answers_A_pct": result["answers"]["A"] / total,
                 f"benchmark/{cfg.name}/answers_B_pct": result["answers"]["B"] / total,
                 f"benchmark/{cfg.name}/answers_C_pct": result["answers"]["C"] / total,
                 f"benchmark/{cfg.name}/answers_D_pct": result["answers"]["D"] / total,
                 f"benchmark/{cfg.name}/answers_other_pct": result["answers"]["other"] / total,
-            }
-            ml_logger.log_metrics(metrics, step=step)
+            })
 
             # Save predictions
             if run_dir:
@@ -454,3 +455,7 @@ def run_benchmark_evals(
                         "predictions": result["predictions"],
                     }, f, indent=2)
                 logger.debug(f"  benchmark predictions saved to {pred_path}")
+
+    # Log all benchmark metrics in a single call to avoid W&B step-overwrite
+    if all_metrics:
+        ml_logger.log_metrics(all_metrics, step=step)

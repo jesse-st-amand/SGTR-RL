@@ -58,6 +58,7 @@ class TestExtractMMLUAnswer:
         ("answer: c", "C"),
         ("ANSWER=D", "D"),
         ("ANSWER: A", "A"),
+        ("Let me think...\nANSWER: C", "C"),
     ])
     def test_extract_mmlu_answer_explicit(self, text, expected):
         assert extract_mmlu_answer(text) == expected
@@ -73,9 +74,19 @@ class TestExtractMMLUAnswer:
     @pytest.mark.parametrize("text", [
         "3",
         "",
+        # Cheating: multiple different ANSWER: lines
+        "ANSWER: A\nANSWER: B\nANSWER: C\nANSWER: D",
+        "ANSWER: A\nActually, ANSWER: B",
+        # Cheating: all 4 letters mentioned as standalone
+        "A B C D",
+        "The options are A, B, C, and D.",
     ])
     def test_extract_mmlu_answer_invalid(self, text):
         assert extract_mmlu_answer(text) is None
+
+    def test_extract_mmlu_answer_repeated_same_answer(self):
+        """Multiple ANSWER: lines agreeing should be accepted."""
+        assert extract_mmlu_answer("ANSWER: B\nSo ANSWER: B") == "B"
 
 
 # ---------------------------------------------------------------------------
