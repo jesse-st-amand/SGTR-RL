@@ -68,13 +68,13 @@ class TestLoadTrainingConfig:
             "benchmark_evals": {
                 "mmlu_20": {
                     "type": "mmlu",
-                    "data_file": "data/benchmarks/mmlu_20.jsonl",
+                    "data_file": "data/benchmarks/mmlu.jsonl",
                     "schedule": "every_epoch",
                     "cot": False,
                 },
                 "mmlu_500_cot": {
                     "type": "mmlu",
-                    "data_file": "data/benchmarks/mmlu_500.jsonl",
+                    "data_file": "data/benchmarks/mmlu.jsonl",
                     "schedule": "end_only",
                     "cot": True,
                 },
@@ -107,7 +107,7 @@ class TestLoadTrainingConfig:
                 },
                 "mmlu_canary": {
                     "type": "mmlu",
-                    "data_file": "data/benchmarks/mmlu_500.jsonl",
+                    "data_file": "data/benchmarks/mmlu.jsonl",
                     "num_samples": 20,
                 },
             },

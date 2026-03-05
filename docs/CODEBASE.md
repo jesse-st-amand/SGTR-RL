@@ -251,7 +251,7 @@ hyperparameters:
 benchmark_evals:
   mmlu_canary:
     type: mmlu                       # "mmlu" | "sgtr"
-    data_file: data/benchmarks/mmlu_500.jsonl
+    data_file: data/benchmarks/mmlu.jsonl
     num_samples: 20                  # Deterministic subsample (omit for all)
     schedule: every_epoch            # "every_epoch" | "every_N_epochs" | "end_only"
     cot: false                       # Chain-of-thought (non-CoT uses max_tokens=16)
