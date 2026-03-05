@@ -3,7 +3,6 @@
 import pytest
 
 from sgtr_rl.benchmarks import (
-    _filter_by_model,
     _subsample,
     extract_mmlu_answer,
     format_mmlu_prompt,
@@ -174,43 +173,3 @@ class TestShouldRunBenchmark:
     def test_should_run_end_only(self):
         assert should_run_benchmark("end_only", 1, epoch=5, total_epochs=10) is False
         assert should_run_benchmark("end_only", 1, epoch=10, total_epochs=10) is True
-
-
-# ---------------------------------------------------------------------------
-# _filter_by_model (flat schema)
-# ---------------------------------------------------------------------------
-
-class TestFilterByModel:
-    def test_filter_pw_by_opponent_model(self):
-        data = [
-            {"prompt": "a", "opponent_model": "qwen-2.5-7b"},
-            {"prompt": "b", "opponent_model": "haiku-3.5"},
-            {"prompt": "c", "opponent_model": "qwen-2.5-7b"},
-        ]
-        result = _filter_by_model(data, "qwen-2.5-7b")
-        assert len(result) == 2
-        assert result[0]["prompt"] == "a"
-        assert result[1]["prompt"] == "c"
-
-    def test_filter_ind_keeps_control_and_matching(self):
-        data = [
-            {"prompt": "ctrl", "is_control": True},
-            {"prompt": "qwen", "opponent_model": "qwen-2.5-7b"},
-            {"prompt": "haiku", "opponent_model": "haiku-3.5"},
-        ]
-        result = _filter_by_model(data, "qwen-2.5-7b")
-        assert len(result) == 2
-        assert result[0]["prompt"] == "ctrl"
-        assert result[1]["prompt"] == "qwen"
-
-    def test_filter_returns_empty_for_no_match(self):
-        data = [
-            {"prompt": "a", "opponent_model": "haiku-3.5"},
-        ]
-        result = _filter_by_model(data, "gpt-4o")
-        assert len(result) == 0
-
-    def test_filter_no_opponent_model(self):
-        data = [{"prompt": "a"}]
-        result = _filter_by_model(data, "qwen-2.5-7b")
-        assert len(result) == 0

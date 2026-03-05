@@ -5,11 +5,14 @@ import logging
 from pathlib import Path
 
 from sgtr_rl.answer import extract_answer
+from sgtr_rl.data import build_conversation
 
 logger = logging.getLogger(__name__)
 
 
-def compute_val_nll(val_prompts, training_client, renderer) -> float:
+def compute_val_nll(
+    val_prompts, training_client, renderer, use_system_prompt: bool = False,
+) -> float:
     """Compute mean NLL on validation set via forward pass.
 
     Builds SFT-style datums from val prompts, runs forward_backward to get
@@ -31,10 +34,8 @@ def compute_val_nll(val_prompts, training_client, renderer) -> float:
 
     datums = []
     for item in val_prompts:
-        convo = [
-            {"role": "user", "content": item["prompt"]},
-            {"role": "assistant", "content": item["target"]},
-        ]
+        convo = build_conversation(item, use_system_prompt)
+        convo.append({"role": "assistant", "content": item["target"]})
         datum = conversation_to_datum(
             convo, renderer, None, TrainOnWhat.LAST_ASSISTANT_MESSAGE
         )
@@ -57,7 +58,10 @@ def compute_val_nll(val_prompts, training_client, renderer) -> float:
     return compute_mean_nll(logprobs, weights)
 
 
-def evaluate_val(val_prompts, sampling_client, renderer, eval_params) -> dict:
+def evaluate_val(
+    val_prompts, sampling_client, renderer, eval_params,
+    use_system_prompt: bool = False,
+) -> dict:
     """Run greedy evaluation on validation set.
 
     Args:
@@ -74,7 +78,7 @@ def evaluate_val(val_prompts, sampling_client, renderer, eval_params) -> dict:
 
     futures = []
     for item in val_prompts:
-        convo = [{"role": "user", "content": item["prompt"]}]
+        convo = build_conversation(item, use_system_prompt)
         model_input = renderer.build_generation_prompt(convo)
         future = sampling_client.sample(
             prompt=model_input, num_samples=1, sampling_params=eval_params,
@@ -166,6 +170,7 @@ def run_val_eval(
     step: int,
     epoch: int,
     run_dir: str | None = None,
+    use_system_prompt: bool = False,
 ) -> dict | None:
     """Run full validation: accuracy, NLL, logging, and prediction saving.
 
@@ -176,8 +181,10 @@ def run_val_eval(
         return None
 
     val_sampling = training_client.save_weights_and_get_sampling_client()
-    val_result = evaluate_val(val_prompts, val_sampling, renderer, eval_params)
-    val_nll = compute_val_nll(val_prompts, training_client, renderer)
+    val_result = evaluate_val(
+        val_prompts, val_sampling, renderer, eval_params, use_system_prompt,
+    )
+    val_nll = compute_val_nll(val_prompts, training_client, renderer, use_system_prompt)
     val_result["nll"] = val_nll
     log_val_result(val_result)
     log_val_metrics(ml_logger, val_result, step=step)

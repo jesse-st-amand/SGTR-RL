@@ -21,6 +21,8 @@ import matplotlib
 import matplotlib.pyplot as plt
 import numpy as np
 
+from sgtr_rl.logging_setup import setup_logging
+
 matplotlib.rcParams.update({"font.size": 10})
 
 logger = logging.getLogger(__name__)
@@ -773,7 +775,7 @@ def main():
     parser.add_argument("--experiments", nargs="*", help="Filter to specific experiment numbers (e.g. 15 16)")
     args = parser.parse_args()
 
-    logging.basicConfig(level=logging.INFO, format="%(message)s")
+    setup_logging("plot_cross_evals")
 
     results_dir = Path(args.results_dir)
 

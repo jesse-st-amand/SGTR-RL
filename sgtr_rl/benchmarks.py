@@ -11,7 +11,7 @@ import random
 import re
 from pathlib import Path
 
-from sgtr_rl.data import flip_target, load_jsonl
+from sgtr_rl.data import build_conversation, flip_target, load_jsonl
 
 logger = logging.getLogger(__name__)
 
@@ -36,23 +36,6 @@ def load_benchmark_data(path: str) -> list[dict]:
     """Load benchmark JSONL data, caching by path."""
     return list(_load_benchmark_cached(path))
 
-
-def _filter_by_model(data: list[dict], model: str) -> list[dict]:
-    """Filter SGTR eval data to only samples involving a specific 'other' model.
-
-    Uses flat schema fields: opponent_model and is_control.
-    """
-    filtered = []
-    for item in data:
-        opponent = item.get("opponent_model", "")
-        if opponent == model:
-            filtered.append(item)
-            continue
-        # IND control samples: keep them (they're the evaluator's own text)
-        is_control = item.get("is_control", False)
-        if is_control:
-            filtered.append(item)
-    return filtered
 
 
 def format_mmlu_prompt(item: dict, cot: bool = False) -> str:
@@ -211,6 +194,7 @@ def evaluate_sgtr_benchmark(
     renderer,
     eval_params,
     flip_targets: bool = False,
+    use_system_prompt: bool = False,
 ) -> dict:
     """Run SGTR benchmark evaluation on loaded data.
 
@@ -229,7 +213,7 @@ def evaluate_sgtr_benchmark(
     # Fire all requests
     futures = []
     for item in data:
-        convo = [{"role": "user", "content": item["prompt"]}]
+        convo = build_conversation(item, use_system_prompt)
         model_input = renderer.build_generation_prompt(convo)
         future = sampling_client.sample(
             prompt=model_input, num_samples=1, sampling_params=eval_params,
@@ -267,7 +251,7 @@ def evaluate_sgtr_benchmark(
         format_total[fmt] = format_total.get(fmt, 0) + 1
 
         predictions.append({
-            "prompt": item["prompt"][:200],
+            "prompt": item["prompt"][:200] if isinstance(item["prompt"], str) else "(multi-turn)",
             "format": fmt,
             "prediction": answer,
             "target": target,
@@ -335,6 +319,7 @@ def run_benchmark_evals(
     epoch: int,
     total_epochs: int,
     run_dir: str | None = None,
+    use_system_prompt: bool = False,
 ) -> None:
     """Run all configured benchmark evals that are due this epoch."""
     if not configs:
@@ -358,15 +343,13 @@ def run_benchmark_evals(
         logger.info(f"Running benchmark eval: {cfg.name} (type={cfg.type}, epoch={epoch})")
 
         data = load_benchmark_data(cfg.data_file)
-        if cfg.filter_model:
-            data = _filter_by_model(data, cfg.filter_model)
-            logger.info(f"  Filtered to {len(data)} samples for model={cfg.filter_model}")
         data = _subsample(data, cfg.num_samples)
 
         if cfg.type == "sgtr":
             result = evaluate_sgtr_benchmark(
                 data, sampling_client, renderer, eval_params,
                 flip_targets=cfg.flip_targets,
+                use_system_prompt=use_system_prompt,
             )
 
             # Log to console (1/2 distribution)

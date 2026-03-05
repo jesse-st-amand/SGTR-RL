@@ -103,6 +103,37 @@ def validate_training_data(
     }
 
 
+def build_conversation(
+    item: dict,
+    use_system_prompt: bool = False,
+) -> list[dict]:
+    """Build a conversation message list from a training record.
+
+    Args:
+        item: Training record with 'prompt' and optionally 'system_prompt'.
+              prompt can be a string (UT/ICML) or list of message dicts (AT/COLM).
+        use_system_prompt: If True, prepend system_prompt from the record.
+
+    Returns:
+        List of message dicts (role/content) for the renderer.
+    """
+    prompt = item["prompt"]
+
+    if isinstance(prompt, list):
+        # Multi-turn chat format (AT/COLM): already a list of {role, content}
+        convo = list(prompt)
+    else:
+        # Single string (UT/ICML): wrap in a user message
+        convo = [{"role": "user", "content": prompt}]
+
+    if use_system_prompt:
+        sp = item.get("system_prompt")
+        if sp:
+            convo.insert(0, {"role": "system", "content": sp})
+
+    return convo
+
+
 def _validate_record_schema(rec: dict, label: str, index: int, id_field: str) -> None:
     """Validate a single record has required fields."""
     for field in ("prompt", "target", id_field):

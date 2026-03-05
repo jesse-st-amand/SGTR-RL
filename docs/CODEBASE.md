@@ -44,7 +44,7 @@ SGTR-RL/
 
 | File | Purpose |
 |------|---------|
-| `config.py` | `TrainingConfig` dataclass + `load_training_config()` YAML parser. All hyperparameters flow through here. Includes `BenchmarkEvalConfig` with `filter_model` support. |
+| `config.py` | `TrainingConfig` dataclass + `load_training_config()` YAML parser. All hyperparameters flow through here. Includes `BenchmarkEvalConfig`. |
 | `answer.py` | `extract_answer()` — extracts "1" or "2" from model output text. Handles both bare digits and "Answer: N" patterns. |
 | `reward.py` | `sgtr_binary_reward()` — extracts answer from model output, returns 1.0 if correct, 0.0 otherwise. |
 | `tinker.py` | `TinkerContext` dataclass (shared Tinker state) + `setup_tinker()` (creates ServiceClient, training client, tokenizer, renderer, params) + `save_checkpoint()`. |
@@ -53,7 +53,7 @@ SGTR-RL/
 | `grpo.py` | `train_grpo(config, ctx, prompts, val_prompts)` — GRPO training loop: sample rollouts, compute rewards, center advantages within groups, build Tinker datums, call `forward_backward` + `optim_step`. |
 | `data.py` | `load_jsonl()`, `flip_target()`, `validate_training_data()` — data loading and integrity validation (schema, targets, ID overlap, PW ordering). |
 | `eval.py` | Shared validation evaluation logic. `evaluate_val()` (greedy accuracy), `compute_val_nll()` (forward-pass NLL), `run_val_eval()`. |
-| `benchmarks.py` | Benchmark evaluation during training. `type: mmlu` (inspect-ai compatible prompt format) and `type: sgtr` (cross-eval with `filter_model`, `flip_targets`, `num_samples`). |
+| `benchmarks.py` | Benchmark evaluation during training. `type: mmlu` (inspect-ai compatible prompt format) and `type: sgtr` (cross-eval with `flip_targets`, `num_samples`). |
 | `runs.py` | Creates structured run directories under `results/`. Handles run naming, config freezing, and existing-run policies. |
 | `plotting.py` | `generate_summary_plot()` — 3-subplot summary figure (loss, accuracy, benchmarks) from `metrics/metrics.jsonl`. |
 | `logging_setup.py` | Dual logging to terminal + file. |
@@ -63,7 +63,7 @@ SGTR-RL/
 | Script | Purpose | Example |
 |--------|---------|---------|
 | `train.py` | Main training entry point | `python -m scripts.train --config experiments/15_.../config.yaml` |
-| `prepare_data.py` | Download from HuggingFace + extract training data | `python -m scripts.prepare_data --evaluator ll-3.1-8b --dataset sharegpt --name llama8b` |
+| `prepare_data.py` | Download from HuggingFace + extract training data | `python -m scripts.prepare_data --evaluator ll-3.1-8b` |
 | `prepare_mmlu.py` | Download MMLU and prepare benchmark JSONL files | `python -m scripts.prepare_mmlu` |
 | `plot_cross_evals.py` | Plot cross-eval results across experiments | `python -m scripts.plot_cross_evals` |
 
@@ -169,8 +169,7 @@ python -m scripts.train --config ... --exists skip
 
 ```bash
 # Download from HuggingFace and extract in one step:
-python -m scripts.prepare_data \
-    --evaluator ll-3.1-8b --dataset sharegpt --name llama8b
+python -m scripts.prepare_data --evaluator ll-3.1-8b
 ```
 
 ### Analysis
@@ -207,9 +206,9 @@ Tests live in `tests/` and cover:
 |------|--------------|
 | `test_validate_data.py` | Data validation — ID leakage, schema, targets, PW ordering |
 | `test_reward.py` | Answer extraction and binary reward |
-| `test_benchmark_eval.py` | MMLU prompt formatting, answer extraction, schedule logic, model filtering |
+| `test_benchmark_eval.py` | MMLU prompt formatting, answer extraction, schedule logic |
 | `test_run_dir.py` | Run naming, override computation, directory creation |
-| `test_train_config.py` | YAML config loading, defaults, filter_model resolution |
+| `test_train_config.py` | YAML config loading, defaults |
 | `test_plot_summary.py` | Title building, smoothing, summary plot generation |
 | `test_data_integrity.py` | Validates actual data files on disk (marked `@datasci`) |
 | `test_download_hf_data.py` | HF data download: filename parsing, format detection, filtering |
@@ -258,10 +257,9 @@ benchmark_evals:
     cot: false                       # Chain-of-thought (non-CoT uses max_tokens=16)
   cross_ind_val:
     type: sgtr
-    data_file: data/training_data/llama8b_ind_rec_qwen_ind/val.jsonl
+    data_file: data/training_data/ll-3.1-8b_ICML_02_UT_IND-Q_Rec_NPr_FA_Inst_vs_qwen-2.5-7b-treatment/val.jsonl
     schedule: every_5_epochs
     frequency: 5                     # For every_N_epochs schedule
-    filter_model: auto               # Filter to this "other" model ("auto" = from generator_models)
     flip_targets: false              # Swap "1"<->"2" at eval time
     num_samples: 78
 ```
@@ -271,13 +269,6 @@ benchmark_evals:
 `flip_targets` in `benchmark_evals` swaps target labels "1" and "2" at eval time — useful for cross-evaluation where the label mapping differs between datasets.
 
 `num_samples` subsamples benchmark data deterministically (seed=42).
-
-#### filter_model
-
-`filter_model` filters SGTR benchmark data to only samples involving a specific "other" model. Without this, cross-eval data files that contain multiple generator models would evaluate on a mixture.
-- `filter_model: auto` resolves to the single model in `data.generator_models` (requires exactly one entry)
-- `filter_model: "gpt-4o"` filters explicitly to that model
-- Omit for MMLU or single-model data files
 
 #### MMLU Prompt Format
 

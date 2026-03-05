@@ -6,6 +6,7 @@ import time
 from sgtr_rl.answer import extract_answer
 from sgtr_rl.benchmarks import run_benchmark_evals
 from sgtr_rl.config import TrainingConfig
+from sgtr_rl.data import build_conversation
 from sgtr_rl.eval import run_val_eval
 from sgtr_rl.reward import sgtr_binary_reward
 from sgtr_rl.tinker import TinkerContext
@@ -21,11 +22,17 @@ def _get_reward(completion_text: str, target: str) -> float:
 def _log_example_prompt(prompts: list[dict]) -> None:
     """Log an example prompt so the user can verify data looks right."""
     example = prompts[0]
-    prompt_text = example["prompt"]
-    if len(prompt_text) > 1000:
-        display = prompt_text[:500] + "\n  [...truncated...]\n" + prompt_text[-200:]
+    prompt = example["prompt"]
+    if isinstance(prompt, list):
+        # Multi-turn: show role/content summary
+        parts = [f"  [{m['role']}] {m['content'][:200]}..." if len(m['content']) > 200
+                 else f"  [{m['role']}] {m['content']}" for m in prompt]
+        display = f"({len(prompt)} messages)\n" + "\n".join(parts)
     else:
-        display = prompt_text
+        if len(prompt) > 1000:
+            display = prompt[:500] + "\n  [...truncated...]\n" + prompt[-200:]
+        else:
+            display = prompt
     logger.info(
         f"Example training prompt (target={example['target']}):\n"
         f"  ---\n  {display}\n  ---"
@@ -93,7 +100,7 @@ def train_grpo(
             futures = []
             model_inputs = []
             for item in batch:
-                convo = [{"role": "user", "content": item["prompt"]}]
+                convo = build_conversation(item, cfg.use_system_prompt)
                 model_input = ctx.renderer.build_generation_prompt(convo)
                 future = sampling_client.sample(
                     prompt=model_input,
@@ -275,11 +282,13 @@ def train_grpo(
         run_val_eval(
             val_prompts, ctx.training_client, ctx.renderer, ctx.eval_params,
             ctx.ml_logger, step=global_step, epoch=epoch + 1, run_dir=cfg.run_dir,
+            use_system_prompt=cfg.use_system_prompt,
         )
         run_benchmark_evals(
             cfg.benchmark_evals, ctx.training_client, ctx.renderer, ctx.eval_params,
             ctx.ml_logger, step=global_step, epoch=epoch + 1,
             total_epochs=n_epochs, run_dir=cfg.run_dir,
+            use_system_prompt=cfg.use_system_prompt,
         )
 
     return global_step

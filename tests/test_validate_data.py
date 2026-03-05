@@ -1,9 +1,73 @@
-"""Tests for sgtr_rl.data.validate_training_data."""
+"""Tests for sgtr_rl.data (validate_training_data, build_conversation)."""
 
 import pytest
 from conftest import _ind_record, _pw_record, write_jsonl
 
-from sgtr_rl.data import validate_training_data
+from sgtr_rl.data import build_conversation, validate_training_data
+
+# ---------------------------------------------------------------------------
+# build_conversation
+# ---------------------------------------------------------------------------
+
+class TestBuildConversation:
+    def test_string_prompt(self):
+        item = {"prompt": "Which is yours?", "target": "1", "id": "u1"}
+        convo = build_conversation(item, use_system_prompt=False)
+        assert convo == [{"role": "user", "content": "Which is yours?"}]
+
+    def test_multiturn_prompt(self):
+        """Chat-format (AT/COLM) prompts are passed through as-is."""
+        messages = [
+            {"role": "user", "content": "Write code"},
+            {"role": "assistant", "content": "def foo(): ..."},
+            {"role": "user", "content": "Which is yours?"},
+        ]
+        item = {"prompt": messages, "target": "1", "id": "u1"}
+        convo = build_conversation(item)
+        assert convo == messages
+        # Should be a copy, not the same list
+        assert convo is not messages
+
+    def test_with_system_prompt_string(self):
+        item = {
+            "prompt": "Which is yours?",
+            "target": "1",
+            "id": "u1",
+            "system_prompt": "Be helpful.",
+        }
+        convo = build_conversation(item, use_system_prompt=True)
+        assert len(convo) == 2
+        assert convo[0] == {"role": "system", "content": "Be helpful."}
+        assert convo[1] == {"role": "user", "content": "Which is yours?"}
+
+    def test_with_system_prompt_multiturn(self):
+        """System prompt is prepended to multi-turn conversations."""
+        messages = [
+            {"role": "user", "content": "Write code"},
+            {"role": "assistant", "content": "def foo(): ..."},
+            {"role": "user", "content": "Which is yours?"},
+        ]
+        item = {"prompt": messages, "target": "1", "id": "u1", "system_prompt": "Be helpful."}
+        convo = build_conversation(item, use_system_prompt=True)
+        assert len(convo) == 4
+        assert convo[0] == {"role": "system", "content": "Be helpful."}
+        assert convo[1:] == messages
+
+    def test_system_prompt_enabled_but_missing_from_record(self):
+        item = {"prompt": "Which is yours?", "target": "1", "id": "u1"}
+        convo = build_conversation(item, use_system_prompt=True)
+        assert convo == [{"role": "user", "content": "Which is yours?"}]
+
+    def test_system_prompt_present_but_disabled(self):
+        item = {
+            "prompt": "Which is yours?",
+            "target": "1",
+            "id": "u1",
+            "system_prompt": "Be helpful.",
+        }
+        convo = build_conversation(item, use_system_prompt=False)
+        assert convo == [{"role": "user", "content": "Which is yours?"}]
+
 
 # ---------------------------------------------------------------------------
 # Baselines — valid data passes

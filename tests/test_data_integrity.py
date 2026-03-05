@@ -15,8 +15,8 @@ import pytest
 
 from sgtr_rl.data import validate_training_data
 
-PW_TRAIN = Path("data/training_data/llama8b_pw/train.jsonl")
-PW_VAL = Path("data/training_data/llama8b_pw/val.jsonl")
+PW_TRAIN = Path("data/training_data/ll-3.1-8b_ICML_01_UT_PW-Q_Rec_NPr_FA_Inst_vs_qwen-2.5-7b/train.jsonl")
+PW_VAL = Path("data/training_data/ll-3.1-8b_ICML_01_UT_PW-Q_Rec_NPr_FA_Inst_vs_qwen-2.5-7b/val.jsonl")
 MMLU_20 = Path("data/benchmarks/mmlu_20.jsonl")
 MMLU_500 = Path("data/benchmarks/mmlu_500.jsonl")
 
@@ -84,11 +84,11 @@ class TestPWDataIntegrity:
         assert val_targets == {"1", "2"}
 
     def test_pw_record_counts(self):
-        """Expect 160 train, 40 val records."""
+        """Expect 396 train, 100 val records."""
         train = _load_jsonl(PW_TRAIN)
         val = _load_jsonl(PW_VAL)
-        assert len(train) == 160
-        assert len(val) == 40
+        assert len(train) == 396
+        assert len(val) == 100
 
 
 # ---------------------------------------------------------------------------

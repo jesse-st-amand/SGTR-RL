@@ -129,29 +129,13 @@ class TestLoadTrainingConfig:
         assert mmlu_bench.flip_targets is False
         assert mmlu_bench.num_samples == 20
 
-    def test_load_missing_file_raises(self, tmp_path):
-        with pytest.raises(FileNotFoundError):
-            load_training_config(str(tmp_path / "nonexistent.yaml"))
-
-    def test_filter_model_auto_resolves(self, tmp_path):
-        """filter_model: auto should resolve to the single generator model."""
+    def test_load_with_system_prompt(self, tmp_path):
         config = {
-            "experiment_name": "filter_test",
+            "experiment_name": "sp_test",
             "data": {
                 "train_file": "train.jsonl",
                 "val_file": "val.jsonl",
-                "generator_models": ["haiku-3.5"],
-            },
-            "benchmark_evals": {
-                "wikisum_xeval": {
-                    "type": "sgtr",
-                    "data_file": "data/xeval_wikisum.jsonl",
-                    "filter_model": "auto",
-                },
-                "mmlu_20": {
-                    "type": "mmlu",
-                    "data_file": "data/mmlu_20.jsonl",
-                },
+                "use_system_prompt": True,
             },
         }
         path = tmp_path / "config.yaml"
@@ -159,30 +143,11 @@ class TestLoadTrainingConfig:
             yaml.dump(config, f)
 
         cfg = load_training_config(str(path))
-        sgtr_bench = next(b for b in cfg.benchmark_evals if b.name == "wikisum_xeval")
-        assert sgtr_bench.filter_model == "haiku-3.5"
+        assert cfg.use_system_prompt is True
 
-        mmlu_bench = next(b for b in cfg.benchmark_evals if b.name == "mmlu_20")
-        assert mmlu_bench.filter_model is None
-
-    def test_filter_model_explicit(self, tmp_path):
-        """filter_model can be set to a specific model name."""
-        config = {
-            "experiment_name": "filter_explicit",
-            "benchmark_evals": {
-                "xeval": {
-                    "type": "sgtr",
-                    "data_file": "data/xeval.jsonl",
-                    "filter_model": "gpt-4o",
-                },
-            },
-        }
-        path = tmp_path / "config.yaml"
-        with open(path, "w") as f:
-            yaml.dump(config, f)
-
-        cfg = load_training_config(str(path))
-        assert cfg.benchmark_evals[0].filter_model == "gpt-4o"
+    def test_load_missing_file_raises(self, tmp_path):
+        with pytest.raises(FileNotFoundError):
+            load_training_config(str(tmp_path / "nonexistent.yaml"))
 
 
 # ---------------------------------------------------------------------------
@@ -201,6 +166,7 @@ class TestTrainingConfigDefaults:
         assert cfg.prompt_field == "prompt"
         assert cfg.target_field == "target"
         assert cfg.id_field == "id"
+        assert cfg.use_system_prompt is False
 
 
 # ---------------------------------------------------------------------------

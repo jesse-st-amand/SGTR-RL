@@ -22,11 +22,13 @@ def _load_prompts(config: TrainingConfig) -> list[dict]:
 
     # Log example
     example = prompts[0]
-    prompt_text = example["prompt"]
-    if len(prompt_text) > 1000:
-        display = prompt_text[:500] + "\n  [...truncated...]\n" + prompt_text[-200:]
+    prompt = example["prompt"]
+    if isinstance(prompt, list):
+        display = f"({len(prompt)} messages, multi-turn)"
+    elif len(prompt) > 1000:
+        display = prompt[:500] + "\n  [...truncated...]\n" + prompt[-200:]
     else:
-        display = prompt_text
+        display = prompt
     logger.info(
         f"Example training prompt (target={example['target']}):\n"
         f"  ---\n  {display}\n  ---"
@@ -65,11 +67,12 @@ def run_training(config: TrainingConfig) -> None:
     run_val_eval(
         val_prompts, ctx.training_client, ctx.renderer, ctx.eval_params,
         ctx.ml_logger, step=0, epoch=0, run_dir=config.run_dir,
+        use_system_prompt=config.use_system_prompt,
     )
     run_benchmark_evals(
         config.benchmark_evals, ctx.training_client, ctx.renderer, ctx.eval_params,
         ctx.ml_logger, step=0, epoch=0, total_epochs=config.num_epochs,
-        run_dir=config.run_dir,
+        run_dir=config.run_dir, use_system_prompt=config.use_system_prompt,
     )
 
     train_fns = {"sft": train_sft, "grpo": train_grpo}

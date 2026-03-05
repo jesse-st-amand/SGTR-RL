@@ -20,8 +20,7 @@ cp .env.template .env           # fill in TINKER_API_KEY, WANDB_API_KEY
 **1. Prepare data** — extract SGTR prompts from eval files:
 ```bash
 # Download from HuggingFace and extract training data:
-python -m scripts.prepare_data \
-    --evaluator ll-3.1-8b --dataset sharegpt --name llama8b
+python -m scripts.prepare_data --evaluator ll-3.1-8b
 ```
 
 **2. Train** — SFT or GRPO with LoRA on Tinker:

@@ -7,6 +7,7 @@ import time
 
 from sgtr_rl.benchmarks import run_benchmark_evals
 from sgtr_rl.config import TrainingConfig
+from sgtr_rl.data import build_conversation
 from sgtr_rl.eval import run_val_eval
 from sgtr_rl.tinker import TinkerContext
 
@@ -60,10 +61,8 @@ def train_sft(
             datums: list[tinker.Datum] = []
 
             for item in batch:
-                convo = [
-                    {"role": "user", "content": item["prompt"]},
-                    {"role": "assistant", "content": item["target"]},
-                ]
+                convo = build_conversation(item, cfg.use_system_prompt)
+                convo.append({"role": "assistant", "content": item["target"]})
                 datum = conversation_to_datum(
                     convo, ctx.renderer, None, TrainOnWhat.LAST_ASSISTANT_MESSAGE
                 )
@@ -116,11 +115,13 @@ def train_sft(
         run_val_eval(
             val_prompts, ctx.training_client, ctx.renderer, ctx.eval_params,
             ctx.ml_logger, step=global_step, epoch=epoch + 1, run_dir=cfg.run_dir,
+            use_system_prompt=cfg.use_system_prompt,
         )
         run_benchmark_evals(
             cfg.benchmark_evals, ctx.training_client, ctx.renderer, ctx.eval_params,
             ctx.ml_logger, step=global_step, epoch=epoch + 1,
             total_epochs=n_epochs, run_dir=cfg.run_dir,
+            use_system_prompt=cfg.use_system_prompt,
         )
 
     return global_step

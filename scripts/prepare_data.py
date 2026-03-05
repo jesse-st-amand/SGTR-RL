@@ -1,34 +1,43 @@
 """Download SGTR eval results from HuggingFace and extract training data.
 
-Combined pipeline: download .eval files from HF (preserving original structure),
-then extract training JSONL with flat schema.
+Downloads .eval files from HF, unzips them to data/hf_raw/ preserving the
+HF repo structure (each .eval becomes a directory of JSON files).
+Extraction produces flat training JSONL in data/training_data/{name}/.
 
 Usage:
     # List available files
     python -m scripts.prepare_data \
         --evaluator ll-3.1-8b --dataset sharegpt --list-only
 
-    # Download + extract training data
-    python -m scripts.prepare_data \
-        --evaluator ll-3.1-8b \
-        --dataset sharegpt \
-        --experiments ICML_01_UT_PW-Q_Rec_NPr_FA_Inst \
-        --name llama8b_icml01
+    # Download + extract all experiments for an evaluator
+    python -m scripts.prepare_data --evaluator ll-3.1-8b
 
-    # Re-extract from already-downloaded data
-    python -m scripts.prepare_data --extract-only --name llama8b_pw_rec_haiku
+    # Extract specific experiments from already-downloaded data
+    python -m scripts.prepare_data --extract-only \
+        --evaluator ll-3.1-8b \
+        --experiments ICML_01_UT_PW-Q_Rec_NPr_FA_Inst
+
+    # Extract with CoT prompts (adds _cot suffix to output dirs)
+    python -m scripts.prepare_data --extract-only --cot \
+        --evaluator ll-3.1-8b
+
+Output directories: data/training_data/{evaluator}_{experiment}[_vs_{opponent}][_cot]/
 """
 
 import argparse
 import json
+import logging
 import random
-import shutil
-import tempfile
 import zipfile
 from collections import defaultdict
 from pathlib import Path
 
+from sgtr_rl.logging_setup import setup_logging
+
+logger = logging.getLogger(__name__)
+
 DEFAULT_REPO = "SGTR-Geodesic/self-rec-results"
+ORIGINAL_DIR = Path("data/hf_raw")
 
 _NO_COT_SUFFIX = "Provide only the number and no additional text."
 DEFAULT_COT_SUFFIX = (
@@ -37,33 +46,51 @@ DEFAULT_COT_SUFFIX = (
 )
 
 
+# ---------------------------------------------------------------------------
+# Parsing helpers
+# ---------------------------------------------------------------------------
+
 def parse_eval_filename(filename: str) -> dict:
-    """Extract model roles from eval filename."""
+    """Extract model roles from eval filename.
+
+    Example: '2026-01-21T11-51-30_ll-3.1-8b-eval-on-ll-3.1-8b-vs-qwen-2.5-7b_hash.eval'
+    -> {evaluator: 'll-3.1-8b', self_model: 'll-3.1-8b', opponent: 'qwen-2.5-7b'}
+
+    Also works on directory names (filename without .eval suffix).
+    """
     stem = filename.removesuffix(".eval")
-    parts = stem.split("_", 1)
-    if len(parts) < 2:
-        return {"evaluator": None, "generator": None, "alt": None}
-    rest = parts[1]
-    last_underscore = rest.rfind("_")
-    if last_underscore > 0:
-        rest = rest[:last_underscore]
-
     marker = "-eval-on-"
-    if marker not in rest:
-        return {"evaluator": None, "generator": None, "alt": None}
+    if marker not in stem:
+        return {"evaluator": None, "self_model": None, "opponent": None}
 
-    evaluator, after = rest.split(marker, 1)
+    # Format: datetime_evaluator-eval-on-self-vs-opponent_hash
+    parts = stem.split("_")
+    model_str = None
+    for i, part in enumerate(parts):
+        if marker in part:
+            model_str = "_".join(parts[i:-1]) if i < len(parts) - 1 else parts[i]
+            break
+    if not model_str or marker not in model_str:
+        return {"evaluator": None, "self_model": None, "opponent": None}
+
+    evaluator, after = model_str.split(marker, 1)
     if "-vs-" in after:
-        generator, alt = after.split("-vs-", 1)
+        self_model, opponent = after.split("-vs-", 1)
     else:
-        generator = after
-        alt = None
+        # IND format: ll-3.1-8b-eval-on-qwen-2.5-7b-treatment
+        self_model = after
+        opponent = None
 
-    return {"evaluator": evaluator, "generator": generator, "alt": alt}
+    return {"evaluator": evaluator, "self_model": self_model, "opponent": opponent}
 
 
-def detect_format(experiment_id: str) -> str | None:
-    """Detect prompt format from experiment ID."""
+def detect_format_from_experiment(experiment_id: str) -> str | None:
+    """Detect prompt format from experiment ID string.
+
+    Experiment IDs encode the format, e.g.:
+      ICML_01_UT_PW-Q_Rec_NPr_FA_Inst  -> 'pw'
+      ICML_02_UT_IND-Q_Rec_NPr_FA_Inst -> 'ind'
+    """
     if "_IND" in experiment_id:
         return "ind"
     if "_PW" in experiment_id:
@@ -71,15 +98,32 @@ def detect_format(experiment_id: str) -> str | None:
     return None
 
 
-def _detect_format_from_path(eval_path: Path, root: Path) -> str:
-    """Detect pw/ind format from the file's path components."""
-    rel = eval_path.relative_to(root)
-    for part in rel.parts:
-        if part == "PW" or "_PW" in part:
-            return "pw"
-        if part == "IND" or "_IND" in part:
-            return "ind"
-    return "unknown"
+def get_opponent_from_filename(filename: str) -> str:
+    """Extract opponent model name from eval filename or directory name."""
+    info = parse_eval_filename(filename)
+    return info.get("opponent") or info.get("self_model") or "unknown"
+
+
+# ---------------------------------------------------------------------------
+# HF file filtering
+# ---------------------------------------------------------------------------
+
+def parse_hf_path(path: str) -> dict | None:
+    """Parse an HF repo file path into components.
+
+    HF structure: dataset/split/experiment/file.eval
+    Example: sharegpt/english_26/ICML_01_UT_PW-Q_Rec_NPr_FA_Inst/datetime_models_hash.eval
+    """
+    parts = path.split("/")
+    if len(parts) < 4 or not path.endswith(".eval"):
+        return None
+    return {
+        "dataset": parts[0],
+        "split": parts[1],
+        "experiment": parts[2],
+        "filename": parts[-1],
+        "format": detect_format_from_experiment(parts[2]),
+    }
 
 
 def filter_files(
@@ -94,27 +138,22 @@ def filter_files(
     """Filter HF repo file paths by criteria."""
     matched = []
     for path in all_files:
-        if not path.endswith(".eval"):
+        parsed = parse_hf_path(path)
+        if not parsed:
             continue
-        parts = path.split("/")
-        if len(parts) < 4:
-            continue
-        file_dataset = parts[0]
-        file_split = parts[1]
-        file_experiment = parts[2]
-        filename = parts[-1]
 
-        if dataset and file_dataset != dataset:
+        if dataset and parsed["dataset"] != dataset:
             continue
-        if splits and file_split not in splits:
+        if splits and parsed["split"] not in splits:
             continue
-        if experiments and file_experiment not in experiments:
+        if experiments and parsed["experiment"] not in experiments:
             continue
-        if evaluator and f"{evaluator}-eval-on" not in filename:
+        if evaluator and f"{evaluator}-eval-on" not in parsed["filename"]:
             continue
         if generators:
             gen_match = any(
-                f"-eval-on-{g}" in filename or f"-vs-{g}" in filename
+                f"-vs-{g}" in parsed["filename"]
+                or f"-on-{g}-" in parsed["filename"]
                 for g in generators
             )
             if not gen_match:
@@ -124,34 +163,95 @@ def filter_files(
     return sorted(matched)
 
 
-def extract_samples_from_eval(eval_path: Path) -> list[dict]:
-    """Extract all samples from a single .eval zip archive."""
-    samples = []
+# ---------------------------------------------------------------------------
+# .eval unzipping and sample reading
+# ---------------------------------------------------------------------------
+
+def unzip_eval(eval_path: Path, dest_dir: Path) -> None:
+    """Unzip a .eval file into a directory, then delete the zip."""
+    dest_dir.mkdir(parents=True, exist_ok=True)
     with zipfile.ZipFile(eval_path, "r") as zf:
-        for name in zf.namelist():
-            if not name.startswith("samples/") or not name.endswith(".json"):
-                continue
-            with zf.open(name) as f:
-                sample = json.loads(f.read())
-                samples.append(sample)
+        zf.extractall(dest_dir)
+    eval_path.unlink()
+
+
+def hf_path_to_local_dir(hf_path: str) -> Path:
+    """Convert an HF .eval path to its local unzipped directory path.
+
+    e.g. 'sharegpt/english_26/ICML_01_.../file.eval'
+      -> ORIGINAL_DIR / 'sharegpt/english_26/ICML_01_.../file/'
+    """
+    return ORIGINAL_DIR / hf_path.removesuffix(".eval")
+
+
+def load_system_prompt(eval_dir: Path) -> str | None:
+    """Read the system prompt from an eval directory's journal."""
+    start_json = eval_dir / "_journal" / "start.json"
+    if not start_json.exists():
+        return None
+    with open(start_json) as f:
+        data = json.load(f)
+    return data.get("plan", {}).get("config", {}).get("system_message")
+
+
+def load_samples(eval_dir: Path) -> list[dict]:
+    """Load all sample JSONs from an unzipped eval directory."""
+    samples_dir = eval_dir / "samples"
+    if not samples_dir.exists():
+        return []
+    samples = []
+    for json_path in sorted(samples_dir.glob("*.json")):
+        with open(json_path) as f:
+            samples.append(json.load(f))
     return samples
 
 
-def _to_cot_prompt(prompt: str, cot_suffix: str = DEFAULT_COT_SUFFIX) -> str:
-    """Replace the no-CoT instruction with a CoT instruction."""
+# ---------------------------------------------------------------------------
+# Sample -> training record conversion
+# ---------------------------------------------------------------------------
+
+def _to_cot_prompt(
+    prompt: str | list[dict], cot_suffix: str = DEFAULT_COT_SUFFIX,
+) -> str | list[dict]:
+    """Replace the no-CoT instruction with a CoT instruction.
+
+    For string prompts, does direct replacement. For chat-format prompts
+    (list of message dicts), modifies the last message's content.
+    """
+    if isinstance(prompt, list):
+        last = prompt[-1]
+        content = last.get("content", "")
+        if _NO_COT_SUFFIX in content:
+            modified = [*prompt]
+            modified[-1] = {**last, "content": content.replace(_NO_COT_SUFFIX, cot_suffix)}
+            return modified
+        return prompt
     if _NO_COT_SUFFIX in prompt:
         return prompt.replace(_NO_COT_SUFFIX, cot_suffix)
     return prompt
 
 
-def eval_sample_to_training(
-    sample: dict, cot: bool = False, cot_suffix: str = DEFAULT_COT_SUFFIX,
+def sample_to_training_record(
+    sample: dict,
+    cot: bool = False,
+    cot_suffix: str = DEFAULT_COT_SUFFIX,
+    system_prompt: str | None = None,
 ) -> dict:
-    """Convert an eval sample to a flat training record.
+    """Convert an Inspect eval sample to a flat training record.
 
-    Output schema: {prompt, target, id, format, opponent_model?, is_control?}
+    Output schema: {prompt, target, id, system_prompt?, format, opponent_model?, is_control?}
+
+    For string inputs (UT/ICML), prompt is stored as a string.
+    For chat inputs (AT/COLM), prompt is stored as list[dict] preserving
+    the multi-turn structure so the renderer can apply the correct chat
+    template at training time.
     """
-    prompt = sample["input"]
+    raw_input = sample["input"]
+    if isinstance(raw_input, list):
+        # Preserve multi-turn structure; strip Inspect message IDs
+        prompt = [{"role": m["role"], "content": m["content"]} for m in raw_input]
+    else:
+        prompt = raw_input
     if cot:
         prompt = _to_cot_prompt(prompt, cot_suffix)
     target = str(sample.get("target", sample["metadata"].get("correct_answer")))
@@ -162,6 +262,8 @@ def eval_sample_to_training(
         "target": target,
         "id": sample_id,
     }
+    if system_prompt:
+        record["system_prompt"] = system_prompt.strip()
 
     # IND-specific fields
     if "treatment_name" in sample["metadata"]:
@@ -176,78 +278,84 @@ def eval_sample_to_training(
     return record
 
 
-def _get_generator_from_filename(eval_path: Path) -> str:
-    """Extract generator model name from eval filename (the 'alt' model in vs-{alt})."""
-    info = parse_eval_filename(eval_path.name)
-    return info.get("alt") or info.get("generator") or "unknown"
+# ---------------------------------------------------------------------------
+# Grouping and extraction pipeline
+# ---------------------------------------------------------------------------
 
-
-def collect_eval_files(
-    eval_dir: Path, generator_filter: str | None = None,
+def group_eval_dirs(
+    hf_paths: list[str],
 ) -> dict[str, dict[str, list[Path]]]:
-    """Recursively find all .eval files, grouped by format and generator.
+    """Group unzipped eval directories by experiment and opponent model.
 
-    Returns: {format: {generator: [files]}}
+    Different experiments (ICML_01, COLM_01) use the same UUIDs with different
+    prompt formats, so we group by experiment to avoid mixing them.
+
+    Returns: {experiment: {opponent_model: [local_dir_paths]}}
     """
-    # format -> generator -> files
     result: dict[str, dict[str, list[Path]]] = {}
-    skipped = []
-    for eval_file in sorted(eval_dir.rglob("*.eval")):
-        fmt = _detect_format_from_path(eval_file, eval_dir)
+    for hf_path in hf_paths:
+        parsed = parse_hf_path(hf_path)
+        if not parsed:
+            continue
+        fmt = parsed["format"]
         if fmt not in ("pw", "ind"):
-            skipped.append(eval_file)
             continue
 
-        gen = _get_generator_from_filename(eval_file)
-        if generator_filter and gen != generator_filter:
+        local_dir = hf_path_to_local_dir(hf_path)
+        if not local_dir.exists():
             continue
 
-        if fmt not in result:
-            result[fmt] = {}
-        if gen not in result[fmt]:
-            result[fmt][gen] = []
-        result[fmt][gen].append(eval_file)
+        experiment = parsed["experiment"]
+        opponent = get_opponent_from_filename(parsed["filename"])
 
-    if skipped:
-        print(f"  Warning: {len(skipped)} .eval files with unknown format (skipped)")
-        for s in skipped[:3]:
-            print(f"    {s.relative_to(eval_dir)}")
+        if experiment not in result:
+            result[experiment] = {}
+        if opponent not in result[experiment]:
+            result[experiment][opponent] = []
+        result[experiment][opponent].append(local_dir)
 
     return result
 
 
 def run_extraction(
-    eval_files: list[Path],
+    eval_dirs: list[Path],
     fmt: str,
     output_dir: Path,
     cot: bool = False,
     train_ratio: float = 0.8,
     seed: int = 42,
 ):
-    """Extract training data from .eval files and split by ID."""
-    if not eval_files:
-        print(f"  No .eval files for format '{fmt}'")
+    """Extract training data from unzipped eval directories and split by ID."""
+    if not eval_dirs:
+        logger.info("No eval directories for format '%s'", fmt)
         return
 
-    cot_suffix = DEFAULT_COT_SUFFIX
-
-    print(f"  Extracting {len(eval_files)} .eval files for format '{fmt}'...")
+    logger.info("Extracting from %d eval directories for format '%s'...", len(eval_dirs), fmt)
     all_records = []
-    for eval_file in eval_files:
-        samples = extract_samples_from_eval(eval_file)
-        records = [eval_sample_to_training(s, cot=cot, cot_suffix=cot_suffix) for s in samples]
+    for eval_dir in eval_dirs:
+        system_prompt = load_system_prompt(eval_dir)
+        samples = load_samples(eval_dir)
+        records = [
+            sample_to_training_record(
+                s, cot=cot, cot_suffix=DEFAULT_COT_SUFFIX,
+                system_prompt=system_prompt,
+            )
+            for s in samples
+        ]
         all_records.extend(records)
 
-    # Deduplicate
+    # Deduplicate by (prompt, target)
     seen = set()
     unique = []
     for rec in all_records:
-        key = (rec["prompt"], rec["target"])
+        p = rec["prompt"]
+        prompt_hash = hash(json.dumps(p)) if isinstance(p, list) else hash(p)
+        key = (prompt_hash, rec["target"])
         if key not in seen:
             seen.add(key)
             unique.append(rec)
 
-    print(f"  {len(all_records)} raw -> {len(unique)} after dedup")
+    logger.info("%d raw -> %d after dedup", len(all_records), len(unique))
 
     # Split by ID
     id_to_records = defaultdict(list)
@@ -259,12 +367,11 @@ def run_extraction(
         bad_ids = {u: len(recs) for u, recs in id_to_records.items() if len(recs) != 2}
         if bad_ids:
             for u, count in list(bad_ids.items())[:5]:
-                print(f"  ERROR: ID {u[:12]}... has {count} records (expected 2)")
-            raise ValueError(
-                f"{len(bad_ids)} IDs don't have exactly 2 records. "
-                f"PW format requires both response orderings per ID."
-            )
-        print(f"  Verified: all {len(id_to_records)} IDs have exactly 2 records")
+                logger.warning("ID %s... has %d records (expected 2), dropping", u[:12], count)
+            logger.warning("Dropping %d IDs with != 2 records", len(bad_ids))
+            for u in bad_ids:
+                del id_to_records[u]
+        logger.info("Verified: %d IDs with exactly 2 records", len(id_to_records))
 
     random.seed(seed)
     ids = list(id_to_records.keys())
@@ -279,7 +386,7 @@ def run_extraction(
         with open(path, "w") as f:
             for rec in subset:
                 f.write(json.dumps(rec) + "\n")
-        print(f"  Saved {len(subset)} records to {path}")
+        logger.info("Saved %d records to %s", len(subset), path)
 
     # Save extraction metadata
     meta = {
@@ -294,33 +401,49 @@ def run_extraction(
         "val_ids": len(ids[split_idx:]),
         "train_size": len(train),
         "val_size": len(val),
-        "eval_files": [str(f) for f in eval_files],
+        "eval_dirs": [str(d) for d in eval_dirs],
     }
     with open(output_dir / "extraction_meta.json", "w") as f:
         json.dump(meta, f, indent=2)
-    print(f"  Saved extraction metadata to {output_dir / 'extraction_meta.json'}")
+    logger.info("Saved extraction metadata to %s", output_dir / "extraction_meta.json")
+
+
+def _detect_evaluator(hf_paths: list[str]) -> str | None:
+    """Detect evaluator model from matched file paths."""
+    for path in hf_paths:
+        parsed = parse_hf_path(path)
+        if not parsed:
+            continue
+        info = parse_eval_filename(parsed["filename"])
+        if info["evaluator"]:
+            return info["evaluator"]
+    return None
 
 
 def _run_all_extractions(
-    by_format: dict[str, dict[str, list[Path]]],
+    by_experiment: dict[str, dict[str, list[Path]]],
     name: str,
     extract_output: str | None,
     cot: bool,
 ):
-    """Run extraction for each format/generator group."""
-    for fmt, gen_groups in by_format.items():
-        for gen, files in sorted(gen_groups.items()):
-            print(f"\n  {fmt.upper()} vs {gen}: {len(files)} files")
+    """Run extraction for each experiment/opponent group."""
+    for experiment, opponent_groups in sorted(by_experiment.items()):
+        fmt = detect_format_from_experiment(experiment) or "unknown"
+        for opponent, dirs in sorted(opponent_groups.items()):
+            logger.info("%s / %s: %d evals", experiment, opponent, len(dirs))
+            cot_suffix = "_cot" if cot else ""
             if extract_output:
                 extract_dir = Path(extract_output)
-            elif len(gen_groups) == 1:
-                # Single generator — simple output name
-                extract_dir = Path("data/training_data") / f"{name}_{fmt}"
+            elif len(opponent_groups) == 1:
+                extract_dir = Path("data/training_data") / f"{name}_{experiment}{cot_suffix}"
             else:
-                # Multiple generators — include generator in name
-                extract_dir = Path("data/training_data") / f"{name}_{fmt}_vs_{gen}"
-            run_extraction(files, fmt, extract_dir, cot=cot)
+                extract_dir = Path("data/training_data") / f"{name}_{experiment}_vs_{opponent}{cot_suffix}"
+            run_extraction(dirs, fmt, extract_dir, cot=cot)
 
+
+# ---------------------------------------------------------------------------
+# CLI
+# ---------------------------------------------------------------------------
 
 def main():
     parser = argparse.ArgumentParser(
@@ -333,17 +456,15 @@ def main():
     parser.add_argument("--evaluator", help="Filter by evaluator model short name")
     parser.add_argument(
         "--generator", action="append", dest="generators",
-        help="Filter by generator model name (repeatable)",
+        help="Filter by generator/opponent model name (repeatable)",
     )
-    parser.add_argument("--dataset", help="Filter by dataset name")
+    parser.add_argument("--dataset", help="Filter by dataset name (e.g. sharegpt)")
     parser.add_argument(
-        "--splits", nargs="+", help="Filter by specific split(s)",
-    )
-    parser.add_argument(
-        "--experiments", nargs="+", help="Filter by experiment ID(s)",
+        "--splits", nargs="+", help="Filter by data split(s) (e.g. english_26)",
     )
     parser.add_argument(
-        "--name", help="Label for output dir (data/original/{name}/)",
+        "--experiments", nargs="+",
+        help="Filter by experiment ID(s) (e.g. ICML_01_UT_PW-Q_Rec_NPr_FA_Inst)",
     )
     parser.add_argument(
         "--list-only", action="store_true",
@@ -351,43 +472,38 @@ def main():
     )
     parser.add_argument(
         "--extract-only", action="store_true",
-        help="Skip download; re-extract from existing data/original/{name}/",
+        help="Skip download; extract from already-downloaded data in data/hf_raw/",
     )
     parser.add_argument(
         "--extract-output",
-        help="Override extraction output dir (default: data/training_data/{name}_{format}/)",
+        help="Override extraction output directory",
     )
     parser.add_argument(
         "--cot", action="store_true",
         help="Use CoT prompts during extraction",
     )
-    parser.add_argument(
-        "--filter-generator",
-        help="Only extract data for this generator model (e.g. 'gpt-4o', 'qwen-2.5-7b')",
-    )
     args = parser.parse_args()
 
-    if not args.list_only and not args.name:
-        parser.error("--name is required unless --list-only is set")
+    setup_logging("prepare_data")
 
-    # --- Extract-only mode: re-extract from existing local data ---
+    # --- List files (from local scan or HF API) ---
     if args.extract_only:
-        eval_dir = Path("data/original") / args.name
-        if not eval_dir.exists():
-            parser.error(f"Eval directory does not exist: {eval_dir}")
-
-        print(f"Re-extracting from {eval_dir}...")
-        by_format = collect_eval_files(eval_dir, generator_filter=args.filter_generator)
-        _run_all_extractions(by_format, args.name, args.extract_output, args.cot)
-        print("\nDone.")
-        return
-
-    # --- Download mode ---
-    from huggingface_hub import HfApi
-
-    api = HfApi()
-    print(f"Listing files in {args.repo}...")
-    all_files = api.list_repo_files(repo_id=args.repo, repo_type="dataset")
+        # Reconstruct HF-style .eval paths from local unzipped directories
+        all_files = [
+            str(p.relative_to(ORIGINAL_DIR)) + ".eval"
+            for p in ORIGINAL_DIR.rglob("samples")
+            if p.is_dir()
+        ]
+        # Convert: sharegpt/.../file/samples -> sharegpt/.../file.eval
+        all_files = [
+            f.removesuffix("/samples.eval") + ".eval"
+            for f in all_files
+        ]
+    else:
+        from huggingface_hub import HfApi
+        api = HfApi()
+        logger.info("Listing files in %s...", args.repo)
+        all_files = api.list_repo_files(repo_id=args.repo, repo_type="dataset")
 
     matched = filter_files(
         all_files,
@@ -398,49 +514,93 @@ def main():
         splits=args.splits,
     )
 
-    print(f"\nMatched {len(matched)} files:")
-    for f in matched:
-        print(f"  {f}")
+    logger.info("Matched %d files", len(matched))
+    for f in matched[:20]:
+        logger.info("  %s", f)
+    if len(matched) > 20:
+        logger.info("  ... and %d more", len(matched) - 20)
 
     if args.list_only:
         return
 
-    if not matched:
-        print("\nNo files matched filters. Nothing to download.")
-        return
+    # Derive output name from evaluator
+    evaluator = args.evaluator or _detect_evaluator(matched)
+    if not evaluator:
+        parser.error("--evaluator is required for download/extract mode")
+    name = evaluator
+    logger.info("Using evaluator '%s' for output directories", name)
 
-    # Download to temp dir
-    from huggingface_hub import hf_hub_download
+    # --- Download + unzip (preserving HF structure as directories) ---
+    if not args.extract_only:
+        from huggingface_hub import hf_hub_download
+        import shutil
+        import tempfile
 
-    cache_dir = Path(tempfile.mkdtemp(prefix="sgtr_hf_"))
-    print(f"\nDownloading {len(matched)} files to {cache_dir}...")
-    for filename in matched:
-        hf_hub_download(
-            repo_id=args.repo, repo_type="dataset",
-            filename=filename, local_dir=cache_dir,
+        to_download = [
+            f for f in matched if not hf_path_to_local_dir(f).exists()
+        ]
+        logger.info(
+            "Downloading %d evals (%d already exist)...",
+            len(to_download), len(matched) - len(to_download),
         )
-        print(f"  Downloaded {filename}")
 
-    # Copy preserving original HF path structure
-    output_dir = Path("data/original") / args.name
-    print(f"\nCopying to {output_dir} (preserving original structure)...")
-    for rel_path in matched:
-        src = cache_dir / rel_path
-        if not src.exists():
-            continue
-        dest = output_dir / rel_path
-        dest.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(src, dest)
-    print(f"  Copied {len(matched)} files")
+        # Download all .eval zips to a single temp dir
+        tmp_dir = Path(tempfile.mkdtemp(prefix="sgtr_"))
+        failed = []
+        for i, filename in enumerate(to_download, 1):
+            for attempt in range(3):
+                try:
+                    hf_hub_download(
+                        repo_id=args.repo, repo_type="dataset",
+                        filename=filename, local_dir=tmp_dir,
+                    )
+                    break
+                except Exception as e:
+                    if attempt < 2:
+                        import time
+                        wait = 2 ** attempt
+                        logger.warning(
+                            "Retry %d/2 for %s (waiting %ds): %s",
+                            attempt + 1, filename, wait, e,
+                        )
+                        time.sleep(wait)
+                    else:
+                        logger.error("FAILED after 3 attempts: %s: %s", filename, e)
+                        failed.append(filename)
+            if i % 50 == 0 or i == len(to_download):
+                logger.info("[%d/%d] downloaded", i, len(to_download))
 
-    # Extract
-    print("\nRunning extraction...")
-    by_format = collect_eval_files(output_dir, generator_filter=args.filter_generator)
-    _run_all_extractions(by_format, args.name, args.extract_output, args.cot)
+        if failed:
+            logger.error("%d files failed to download", len(failed))
+            for f in failed[:10]:
+                logger.error("  %s", f)
 
-    # Cleanup temp dir
-    shutil.rmtree(cache_dir, ignore_errors=True)
-    print("\nDone.")
+        # Unzip all downloaded .eval files
+        logger.info("Unzipping to %s/...", ORIGINAL_DIR)
+        unzipped = 0
+        for filename in to_download:
+            if filename in failed:
+                continue
+            zip_path = tmp_dir / filename
+            if not zip_path.exists():
+                continue
+            dest_dir = hf_path_to_local_dir(filename)
+            unzip_eval(zip_path, dest_dir)
+            unzipped += 1
+        logger.info("%d evals unzipped", unzipped)
+
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+
+    # --- Extract ---
+    logger.info("Grouping evals for extraction...")
+    by_experiment = group_eval_dirs(matched)
+    for experiment, groups in sorted(by_experiment.items()):
+        fmt = detect_format_from_experiment(experiment) or "?"
+        for opponent, dirs in sorted(groups.items()):
+            logger.info("  %s (%s): %s (%d evals)", experiment, fmt, opponent, len(dirs))
+
+    _run_all_extractions(by_experiment, name, args.extract_output, args.cot)
+    logger.info("Done.")
 
 
 if __name__ == "__main__":

@@ -34,6 +34,7 @@ class _DataSection(BaseModel):
 
     train_file: str = ""
     val_file: str = ""
+    use_system_prompt: bool = False
     evaluator_model: str = ""
     generator_models: list[str] = []
     dataset: str = ""
@@ -57,7 +58,6 @@ class BenchmarkEvalConfig(BaseModel):
     cot: bool = False
     flip_targets: bool = False  # swap "1"<->"2" at eval time
     num_samples: int | None = None  # deterministic subsample size (None = use all)
-    filter_model: str | None = None  # filter eval data to this "other" model only
 
 
 class TrainingConfig(BaseModel):
@@ -90,6 +90,9 @@ class TrainingConfig(BaseModel):
     prompt_field: str = "prompt"
     target_field: str = "target"
     id_field: str = "id"
+
+    # If True, prepend system_prompt from training records to conversations
+    use_system_prompt: bool = False
 
     # Run directory (set by runs.create_run_dir)
     run_dir: str = ""
@@ -144,22 +147,9 @@ def load_training_config(yaml_path: str | Path) -> TrainingConfig:
     # Parse benchmark_evals section
     bench_cfg = cfg.get("benchmark_evals", {})
     benchmark_evals = []
-    auto_filter_model = (
-        data.generator_models[0] if len(data.generator_models) == 1 else None
-    )
-
     if bench_cfg:
         for name, bcfg in bench_cfg.items():
-            filter_model = bcfg.get("filter_model")
-            if filter_model == "auto":
-                filter_model = auto_filter_model
-            # Pop filter_model before validation so "auto" doesn't fail Literal check
-            bcfg_clean = {k: v for k, v in bcfg.items() if k != "filter_model"}
-            benchmark_evals.append(BenchmarkEvalConfig(
-                name=name,
-                filter_model=filter_model,
-                **bcfg_clean,
-            ))
+            benchmark_evals.append(BenchmarkEvalConfig(name=name, **bcfg))
 
     return TrainingConfig(
         algorithm=cfg.get("algorithm", "grpo"),
@@ -178,6 +168,7 @@ def load_training_config(yaml_path: str | Path) -> TrainingConfig:
         # Data
         train_file=data.train_file,
         val_file=data.val_file,
+        use_system_prompt=data.use_system_prompt,
         # Logging
         wandb_project=cfg.get("wandb_project"),
         # Benchmarks
