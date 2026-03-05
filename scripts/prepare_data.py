@@ -223,7 +223,8 @@ def sample_to_training_record(
 ) -> dict:
     """Convert an Inspect eval sample to a flat training record.
 
-    Output schema: {prompt, target, id, system_prompt?, format, opponent_model?, is_control?}
+    Output schema: {prompt, target, id, dataset?, data_subset?, system_prompt?,
+                    format, opponent_model?, is_control?}
 
     For string inputs (UT/ICML), prompt is stored as a string.
     For chat inputs (AT/COLM), prompt is stored as list[dict] preserving
@@ -246,6 +247,13 @@ def sample_to_training_record(
         "target": target,
         "id": sample_id,
     }
+
+    # Dataset provenance
+    if "dataset_name" in sample["metadata"]:
+        record["dataset"] = sample["metadata"]["dataset_name"]
+    if "data_subset" in sample["metadata"]:
+        record["data_subset"] = sample["metadata"]["data_subset"]
+
     if system_prompt:
         record["system_prompt"] = system_prompt.strip()
 
@@ -264,15 +272,16 @@ def sample_to_training_record(
 
 def group_eval_dirs(
     hf_paths: list[str],
-) -> dict[str, dict[str, list[Path]]]:
-    """Group unzipped eval directories by experiment and opponent model.
+) -> dict[str, dict[str, dict[str, list[Path]]]]:
+    """Group unzipped eval directories by experiment, opponent, and dataset.
 
     Different experiments (ICML_01, COLM_01) use the same UUIDs with different
     prompt formats, so we group by experiment to avoid mixing them.
+    Dataset is also separated so each output folder has data from one source.
 
-    Returns: {experiment: {opponent_model: [local_dir_paths]}}
+    Returns: {experiment: {opponent: {dataset: [local_dir_paths]}}}
     """
-    result: dict[str, dict[str, list[Path]]] = {}
+    result: dict[str, dict[str, dict[str, list[Path]]]] = {}
     for hf_path in hf_paths:
         parsed = parse_hf_path(hf_path)
         if not parsed:
@@ -287,12 +296,11 @@ def group_eval_dirs(
 
         experiment = parsed["experiment"]
         opponent = get_opponent_from_filename(parsed["filename"])
+        dataset = parsed["dataset"]
 
-        if experiment not in result:
-            result[experiment] = {}
-        if opponent not in result[experiment]:
-            result[experiment][opponent] = []
-        result[experiment][opponent].append(local_dir)
+        result.setdefault(experiment, {}).setdefault(opponent, {}).setdefault(
+            dataset, []
+        ).append(local_dir)
 
     return result
 
@@ -307,6 +315,7 @@ def run_extraction(
     evaluator: str = "",
     experiment: str = "",
     opponent: str = "",
+    dataset: str = "",
 ):
     """Extract training data from unzipped eval directories and split by ID."""
     if not eval_dirs:
@@ -375,6 +384,7 @@ def run_extraction(
         "evaluator": evaluator,
         "experiment": experiment,
         "opponent": opponent,
+        "dataset": dataset,
         "format": fmt,
         "extraction": {
             "cot": cot,
@@ -408,27 +418,33 @@ def _detect_evaluator(hf_paths: list[str]) -> str | None:
 
 
 def _run_all_extractions(
-    by_experiment: dict[str, dict[str, list[Path]]],
+    by_experiment: dict[str, dict[str, dict[str, list[Path]]]],
     name: str,
     extract_output: str | None,
     cot: bool,
 ):
-    """Run extraction for each experiment/opponent group."""
+    """Run extraction for each experiment/opponent/dataset group."""
     for experiment, opponent_groups in sorted(by_experiment.items()):
         fmt = detect_format_from_experiment(experiment) or "unknown"
-        for opponent, dirs in sorted(opponent_groups.items()):
-            logger.info("%s / %s: %d evals", experiment, opponent, len(dirs))
-            cot_suffix = "_cot" if cot else ""
-            if extract_output:
-                extract_dir = Path(extract_output)
-            elif len(opponent_groups) == 1:
-                extract_dir = Path("data/training_data") / f"{name}_{experiment}{cot_suffix}"
-            else:
-                extract_dir = Path("data/training_data") / f"{name}_{experiment}_vs_{opponent}{cot_suffix}"
-            run_extraction(
-                dirs, fmt, extract_dir, cot=cot,
-                evaluator=name, experiment=experiment, opponent=opponent,
-            )
+        for opponent, dataset_groups in sorted(opponent_groups.items()):
+            for dataset, dirs in sorted(dataset_groups.items()):
+                logger.info(
+                    "%s / %s / %s: %d evals",
+                    experiment, opponent, dataset, len(dirs),
+                )
+                cot_suffix = "_cot" if cot else ""
+                if extract_output:
+                    extract_dir = Path(extract_output)
+                else:
+                    extract_dir = (
+                        Path("data/training_data")
+                        / f"{name}_{experiment}_vs_{opponent}_{dataset}{cot_suffix}"
+                    )
+                run_extraction(
+                    dirs, fmt, extract_dir, cot=cot,
+                    evaluator=name, experiment=experiment,
+                    opponent=opponent, dataset=dataset,
+                )
 
 
 def main():
@@ -580,10 +596,14 @@ def main():
     # Extract
     logger.info("Grouping evals for extraction...")
     by_experiment = group_eval_dirs(matched)
-    for experiment, groups in sorted(by_experiment.items()):
+    for experiment, opp_groups in sorted(by_experiment.items()):
         fmt = detect_format_from_experiment(experiment) or "?"
-        for opponent, dirs in sorted(groups.items()):
-            logger.info("  %s (%s): %s (%d evals)", experiment, fmt, opponent, len(dirs))
+        for opponent, ds_groups in sorted(opp_groups.items()):
+            for dataset, dirs in sorted(ds_groups.items()):
+                logger.info(
+                    "  %s (%s): %s / %s (%d evals)",
+                    experiment, fmt, opponent, dataset, len(dirs),
+                )
 
     _run_all_extractions(by_experiment, name, args.extract_output, args.cot)
     logger.info("Done.")

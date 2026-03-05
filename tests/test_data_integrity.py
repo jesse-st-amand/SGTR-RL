@@ -2,10 +2,6 @@
 
 All tests are marked @pytest.mark.datasci and skip if data files don't exist
 (so CI without data still passes).
-
-Note: These tests support both the old nested metadata format and the new flat
-format. Real data files may be in either format depending on whether they've
-been re-extracted with the updated prepare_data.py script.
 """
 
 import json
@@ -15,7 +11,7 @@ import pytest
 
 from sgtr_rl.data import validate_training_data
 
-_PW_DIR = "data/training_data/ll-3.1-8b_ICML_01_UT_PW-Q_Rec_NPr_FA_Inst_vs_qwen-2.5-7b"
+_PW_DIR = "data/training_data/ll-3.1-8b_ICML_01_UT_PW-Q_Rec_NPr_FA_Inst_vs_qwen-2.5-7b_sharegpt"
 PW_TRAIN = Path(_PW_DIR) / "train.jsonl"
 PW_VAL = Path(_PW_DIR) / "val.jsonl"
 MMLU = Path("data/benchmarks/mmlu.jsonl")
@@ -40,15 +36,8 @@ def _load_jsonl(path: Path) -> list[dict]:
 
 
 def _get_record_id(rec: dict) -> str:
-    """Get the record ID, supporting both flat and nested formats."""
-    if "id" in rec:
-        return rec["id"]
-    return rec.get("metadata", {}).get("uuid", "")
-
-
-def _is_flat_format(records: list[dict]) -> bool:
-    """Check if records use the flat schema (has 'id' at top level)."""
-    return len(records) > 0 and "id" in records[0]
+    """Get the record ID."""
+    return rec["id"]
 
 
 # PW data validation
@@ -57,10 +46,8 @@ def _is_flat_format(records: list[dict]) -> bool:
 @pw_data_exists
 class TestPWDataIntegrity:
     def test_pw_data_valid(self):
-        """Full validation passes on real PW data (flat format only)."""
+        """Full validation passes on real PW data."""
         train = _load_jsonl(PW_TRAIN)
-        if not _is_flat_format(train):
-            pytest.skip("Data uses old nested format — re-extract with prepare_data.py")
         val = _load_jsonl(PW_VAL)
         result = validate_training_data(train, val)
         assert result["format"] == "pw"
@@ -83,11 +70,11 @@ class TestPWDataIntegrity:
         assert val_targets == {"1", "2"}
 
     def test_pw_record_counts(self):
-        """Expect 396 train, 100 val records."""
+        """Expect 160 train, 40 val records (sharegpt only)."""
         train = _load_jsonl(PW_TRAIN)
         val = _load_jsonl(PW_VAL)
-        assert len(train) == 396
-        assert len(val) == 100
+        assert len(train) == 160
+        assert len(val) == 40
 
 
 # Benchmark data validation

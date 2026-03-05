@@ -74,11 +74,11 @@ SGTR-RL/
 All training records use a flat JSON schema:
 
 ```json
-{"prompt": "...", "target": "1", "id": "abc-123", "format": "pw", "opponent_model": "qwen-2.5-7b"}
+{"prompt": "...", "target": "1", "id": "abc-123", "format": "pw", "opponent_model": "qwen-2.5-7b", "dataset": "sharegpt", "data_subset": "english_26"}
 ```
 
 Core fields (required by training): `prompt`, `target`, `id`
-Optional fields (metadata): `format`, `opponent_model`, `is_control`, `system_prompt`
+Optional fields (metadata): `format`, `opponent_model`, `is_control`, `system_prompt`, `dataset`, `data_subset`
 
 **Pairwise (PW):** Each ID has exactly 2 records (both response orderings). Train/val splits are done at the ID level to prevent leakage.
 
@@ -95,13 +95,14 @@ Each extracted training data directory includes a `metadata.json`:
   "evaluator": "ll-3.1-8b",
   "experiment": "ICML_01_UT_PW-Q_Rec_NPr_FA_Inst",
   "opponent": "qwen-2.5-7b",
+  "dataset": "sharegpt",
   "format": "pw",
   "extraction": {
     "cot": false,
     "train_ratio": 0.8,
     "seed": 42,
-    "train_size": 396,
-    "val_size": 100,
+    "train_size": 160,
+    "val_size": 40,
     "eval_dirs": ["..."]
   }
 }
