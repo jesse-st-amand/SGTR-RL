@@ -5,11 +5,10 @@ import math
 import random
 import time
 
-from sgtr_rl.benchmarks import run_benchmark_evals
 from sgtr_rl.config import TrainingConfig
 from sgtr_rl.data import build_conversation
-from sgtr_rl.eval import run_val_eval
 from sgtr_rl.tinker import TinkerContext
+from sgtr_rl.tinker_eval import run_benchmark_evals, run_val_eval
 
 logger = logging.getLogger(__name__)
 
@@ -33,12 +32,11 @@ def train_sft(
     from tinker_cookbook.supervised.common import compute_mean_nll
     from tinker_cookbook.supervised.data import conversation_to_datum
 
-    cfg = config
-    batch_size = cfg.per_device_train_batch_size
+    batch_size = config.batch_size
     n_batches = len(prompts) // batch_size
-    n_epochs = cfg.num_epochs
+    n_epochs = config.num_epochs
 
-    random.seed(cfg.seed)
+    random.seed(config.seed)
 
     logger.info(
         f"Training: {n_epochs} epochs, {n_batches} batches/epoch, "
@@ -61,7 +59,7 @@ def train_sft(
             datums: list[tinker.Datum] = []
 
             for item in batch:
-                convo = build_conversation(item, cfg.use_system_prompt)
+                convo = build_conversation(item, config.use_system_prompt)
                 convo.append({"role": "assistant", "content": item["target"]})
                 datum = conversation_to_datum(
                     convo, ctx.renderer, None, TrainOnWhat.LAST_ASSISTANT_MESSAGE
@@ -113,15 +111,13 @@ def train_sft(
 
         # Validation evaluation at each epoch boundary
         run_val_eval(
-            val_prompts, ctx.training_client, ctx.renderer, ctx.eval_params,
-            ctx.ml_logger, step=global_step, epoch=epoch + 1, run_dir=cfg.run_dir,
-            use_system_prompt=cfg.use_system_prompt,
+            val_prompts, ctx, step=global_step, epoch=epoch + 1,
+            run_dir=config.run_dir, use_system_prompt=config.use_system_prompt,
         )
         run_benchmark_evals(
-            cfg.benchmark_evals, ctx.training_client, ctx.renderer, ctx.eval_params,
-            ctx.ml_logger, step=global_step, epoch=epoch + 1,
-            total_epochs=n_epochs, run_dir=cfg.run_dir,
-            use_system_prompt=cfg.use_system_prompt,
+            config.benchmark_evals, ctx, step=global_step, epoch=epoch + 1,
+            total_epochs=n_epochs, run_dir=config.run_dir,
+            use_system_prompt=config.use_system_prompt,
         )
 
     return global_step

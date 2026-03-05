@@ -46,10 +46,6 @@ DEFAULT_COT_SUFFIX = (
 )
 
 
-# ---------------------------------------------------------------------------
-# Parsing helpers
-# ---------------------------------------------------------------------------
-
 def parse_eval_filename(filename: str) -> dict:
     """Extract model roles from eval filename.
 
@@ -103,10 +99,6 @@ def get_opponent_from_filename(filename: str) -> str:
     info = parse_eval_filename(filename)
     return info.get("opponent") or info.get("self_model") or "unknown"
 
-
-# ---------------------------------------------------------------------------
-# HF file filtering
-# ---------------------------------------------------------------------------
 
 def parse_hf_path(path: str) -> dict | None:
     """Parse an HF repo file path into components.
@@ -163,10 +155,6 @@ def filter_files(
     return sorted(matched)
 
 
-# ---------------------------------------------------------------------------
-# .eval unzipping and sample reading
-# ---------------------------------------------------------------------------
-
 def unzip_eval(eval_path: Path, dest_dir: Path) -> None:
     """Unzip a .eval file into a directory, then delete the zip."""
     dest_dir.mkdir(parents=True, exist_ok=True)
@@ -205,10 +193,6 @@ def load_samples(eval_dir: Path) -> list[dict]:
             samples.append(json.load(f))
     return samples
 
-
-# ---------------------------------------------------------------------------
-# Sample -> training record conversion
-# ---------------------------------------------------------------------------
 
 def _to_cot_prompt(
     prompt: str | list[dict], cot_suffix: str = DEFAULT_COT_SUFFIX,
@@ -278,10 +262,6 @@ def sample_to_training_record(
     return record
 
 
-# ---------------------------------------------------------------------------
-# Grouping and extraction pipeline
-# ---------------------------------------------------------------------------
-
 def group_eval_dirs(
     hf_paths: list[str],
 ) -> dict[str, dict[str, list[Path]]]:
@@ -324,6 +304,9 @@ def run_extraction(
     cot: bool = False,
     train_ratio: float = 0.8,
     seed: int = 42,
+    evaluator: str = "",
+    experiment: str = "",
+    opponent: str = "",
 ):
     """Extract training data from unzipped eval directories and split by ID."""
     if not eval_dirs:
@@ -388,24 +371,28 @@ def run_extraction(
                 f.write(json.dumps(rec) + "\n")
         logger.info("Saved %d records to %s", len(subset), path)
 
-    # Save extraction metadata
     meta = {
+        "evaluator": evaluator,
+        "experiment": experiment,
+        "opponent": opponent,
         "format": fmt,
-        "cot": cot,
-        "train_ratio": train_ratio,
-        "seed": seed,
-        "split_by": "id",
-        "total_raw": len(all_records),
-        "total_dedup": len(unique),
-        "train_ids": len(ids[:split_idx]),
-        "val_ids": len(ids[split_idx:]),
-        "train_size": len(train),
-        "val_size": len(val),
-        "eval_dirs": [str(d) for d in eval_dirs],
+        "extraction": {
+            "cot": cot,
+            "train_ratio": train_ratio,
+            "seed": seed,
+            "split_by": "id",
+            "total_raw": len(all_records),
+            "total_dedup": len(unique),
+            "train_ids": len(ids[:split_idx]),
+            "val_ids": len(ids[split_idx:]),
+            "train_size": len(train),
+            "val_size": len(val),
+            "eval_dirs": [str(d) for d in eval_dirs],
+        },
     }
-    with open(output_dir / "extraction_meta.json", "w") as f:
+    with open(output_dir / "metadata.json", "w") as f:
         json.dump(meta, f, indent=2)
-    logger.info("Saved extraction metadata to %s", output_dir / "extraction_meta.json")
+    logger.info("Saved metadata to %s", output_dir / "metadata.json")
 
 
 def _detect_evaluator(hf_paths: list[str]) -> str | None:
@@ -438,12 +425,11 @@ def _run_all_extractions(
                 extract_dir = Path("data/training_data") / f"{name}_{experiment}{cot_suffix}"
             else:
                 extract_dir = Path("data/training_data") / f"{name}_{experiment}_vs_{opponent}{cot_suffix}"
-            run_extraction(dirs, fmt, extract_dir, cot=cot)
+            run_extraction(
+                dirs, fmt, extract_dir, cot=cot,
+                evaluator=name, experiment=experiment, opponent=opponent,
+            )
 
-
-# ---------------------------------------------------------------------------
-# CLI
-# ---------------------------------------------------------------------------
 
 def main():
     parser = argparse.ArgumentParser(
@@ -486,7 +472,7 @@ def main():
 
     setup_logging("prepare_data")
 
-    # --- List files (from local scan or HF API) ---
+    # List files (from local scan or HF API)
     if args.extract_only:
         # Reconstruct HF-style .eval paths from local unzipped directories
         all_files = [
@@ -530,7 +516,7 @@ def main():
     name = evaluator
     logger.info("Using evaluator '%s' for output directories", name)
 
-    # --- Download + unzip (preserving HF structure as directories) ---
+    # Download + unzip (preserving HF structure as directories)
     if not args.extract_only:
         from huggingface_hub import hf_hub_download
         import shutil
@@ -591,7 +577,7 @@ def main():
 
         shutil.rmtree(tmp_dir, ignore_errors=True)
 
-    # --- Extract ---
+    # Extract
     logger.info("Grouping evals for extraction...")
     by_experiment = group_eval_dirs(matched)
     for experiment, groups in sorted(by_experiment.items()):

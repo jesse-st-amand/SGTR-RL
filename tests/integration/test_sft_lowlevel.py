@@ -182,7 +182,7 @@ class TestSFTBatching:
             experiment_name="test_sft_batch",
             model_name="test-model",
             num_epochs=1,
-            per_device_train_batch_size=4,
+            batch_size=4,
             train_file=str(train_path),
             val_file=str(val_path),
             run_dir=str(tmp_path / "run"),

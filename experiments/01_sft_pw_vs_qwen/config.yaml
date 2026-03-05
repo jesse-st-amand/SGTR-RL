@@ -5,10 +5,8 @@ algorithm: sft
 wandb_project: sgtr-rl
 
 data:
-  evaluator_model: ll-3.1-8b
   generator_models: [qwen-2.5-7b]
   dataset: sharegpt
-  subsets: [english_26, english2_74]
   train_file: data/training_data/ll-3.1-8b_ICML_01_UT_PW-Q_Rec_NPr_FA_Inst_vs_qwen-2.5-7b/train.jsonl
   val_file: data/training_data/ll-3.1-8b_ICML_01_UT_PW-Q_Rec_NPr_FA_Inst_vs_qwen-2.5-7b/val.jsonl
 
@@ -19,7 +17,7 @@ model:
 hyperparameters:
   learning_rate: 5.0e-5
   num_epochs: 20
-  per_device_train_batch_size: 16
+  batch_size: 16
   seed: 42
 
 benchmark_evals:

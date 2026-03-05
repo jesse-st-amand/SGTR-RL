@@ -35,7 +35,7 @@ def main():
     # CLI overrides for tracked hyperparameters
     parser.add_argument("--learning_rate", type=float, default=None)
     parser.add_argument("--num_epochs", type=int, default=None)
-    parser.add_argument("--per_device_train_batch_size", type=int, default=None)
+    parser.add_argument("--batch_size", type=int, default=None)
     parser.add_argument("--num_rollouts_per_prompt", type=int, default=None)
     parser.add_argument("--max_completion_length", type=int, default=None)
     parser.add_argument("--lora_rank", type=int, default=None)
@@ -47,17 +47,15 @@ def main():
 
     # Apply CLI hyperparameter overrides
     for field in [
-        "learning_rate", "num_epochs", "per_device_train_batch_size",
+        "learning_rate", "num_epochs", "batch_size",
         "num_rollouts_per_prompt", "max_completion_length", "lora_rank", "seed",
     ]:
         val = getattr(args, field, None)
         if val is not None:
             setattr(config, field, val)
 
-    # Create unified run directory
     run_dir = create_run_dir(config, args.config, group=args.group, exists=args.exists)
 
-    # Set up logging into the run directory
     setup_logging(config.experiment_name, log_file=run_dir / "train.log")
 
     logger.info(f"Run directory: {run_dir}")
@@ -67,7 +65,7 @@ def main():
     logger.info(f"Data: train={config.train_file}, val={config.val_file}")
     logger.info(
         f"Hyperparameters: lr={config.learning_rate}, epochs={config.num_epochs}, "
-        f"batch_size={config.per_device_train_batch_size}, "
+        f"batch_size={config.batch_size}, "
         f"rollouts={config.num_rollouts_per_prompt}, "
         f"max_completion={config.max_completion_length}"
     )

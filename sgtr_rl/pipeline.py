@@ -3,14 +3,13 @@
 import logging
 from pathlib import Path
 
-from sgtr_rl.benchmarks import run_benchmark_evals
 from sgtr_rl.config import TrainingConfig
 from sgtr_rl.data import load_jsonl, validate_training_data
-from sgtr_rl.eval import run_val_eval
 from sgtr_rl.grpo import train_grpo
 from sgtr_rl.plotting import generate_summary_plot
 from sgtr_rl.sft import train_sft
 from sgtr_rl.tinker import save_checkpoint, setup_tinker
+from sgtr_rl.tinker_eval import run_benchmark_evals, run_val_eval
 
 logger = logging.getLogger(__name__)
 
@@ -20,7 +19,6 @@ def _load_prompts(config: TrainingConfig) -> list[dict]:
     prompts = load_jsonl(config.train_file)
     logger.info(f"Loaded {len(prompts)} training prompts")
 
-    # Log example
     example = prompts[0]
     prompt = example["prompt"]
     if isinstance(prompt, list):
@@ -30,8 +28,7 @@ def _load_prompts(config: TrainingConfig) -> list[dict]:
     else:
         display = prompt
     logger.info(
-        f"Example training prompt (target={example['target']}):\n"
-        f"  ---\n  {display}\n  ---"
+        f"Example training prompt (target={example['target']}):\n  {display}"
     )
     return prompts
 
@@ -49,29 +46,23 @@ def run_training(config: TrainingConfig) -> None:
     """Full training pipeline: setup -> validate -> baseline -> train -> checkpoint -> plot."""
     prompts = _load_prompts(config)
     val_prompts = _load_val_prompts(config)
-
-    if config.val_file and Path(config.val_file).exists():
-        summary = validate_training_data(
-            config.train_file, config.val_file, id_field=config.id_field
-        )
-        logger.info(
-            f"Data validation passed: {summary['train_records']} train, "
-            f"{summary['val_records']} val, {summary['train_ids']} train IDs, "
-            f"{summary['val_ids']} val IDs, format={summary['format']}"
-        )
+    summary = validate_training_data(prompts, val_prompts)
+    logger.info(
+        f"Data validation passed: {summary['train_records']} train, "
+        f"{summary['val_records']} val, {summary['train_ids']} train IDs, "
+        f"{summary['val_ids']} val IDs, format={summary['format']}"
+    )
 
     ctx = setup_tinker(config)
 
-    # Epoch 0 baseline: evaluate untrained model
     logger.info("Running epoch 0 baseline evaluation (untrained model)...")
     run_val_eval(
-        val_prompts, ctx.training_client, ctx.renderer, ctx.eval_params,
-        ctx.ml_logger, step=0, epoch=0, run_dir=config.run_dir,
-        use_system_prompt=config.use_system_prompt,
+        val_prompts, ctx, step=0, epoch=0,
+        run_dir=config.run_dir, use_system_prompt=config.use_system_prompt,
     )
     run_benchmark_evals(
-        config.benchmark_evals, ctx.training_client, ctx.renderer, ctx.eval_params,
-        ctx.ml_logger, step=0, epoch=0, total_epochs=config.num_epochs,
+        config.benchmark_evals, ctx, step=0, epoch=0,
+        total_epochs=config.num_epochs,
         run_dir=config.run_dir, use_system_prompt=config.use_system_prompt,
     )
 

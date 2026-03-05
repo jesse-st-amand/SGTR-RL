@@ -32,9 +32,7 @@ SAMPLE_FILES = [
 ]
 
 
-# ---------------------------------------------------------------------------
 # parse_eval_filename
-# ---------------------------------------------------------------------------
 
 
 class TestParseEvalFilename:
@@ -62,9 +60,7 @@ class TestParseEvalFilename:
         assert result["self_model"] is None
 
 
-# ---------------------------------------------------------------------------
 # detect_format_from_experiment
-# ---------------------------------------------------------------------------
 
 
 class TestDetectFormat:
@@ -78,9 +74,7 @@ class TestDetectFormat:
         assert detect_format_from_experiment("ICML_03_something_else") is None
 
 
-# ---------------------------------------------------------------------------
 # filter_files
-# ---------------------------------------------------------------------------
 
 
 class TestFilterFiles:

@@ -5,9 +5,7 @@ import pytest
 from sgtr_rl.answer import extract_answer
 from sgtr_rl.reward import sgtr_binary_reward
 
-# ---------------------------------------------------------------------------
 # extract_answer
-# ---------------------------------------------------------------------------
 
 class TestExtractAnswer:
     @pytest.mark.parametrize("text,expected", [
@@ -48,9 +46,7 @@ class TestExtractAnswer:
         assert extract_answer(text) == "1"
 
 
-# ---------------------------------------------------------------------------
 # sgtr_binary_reward
-# ---------------------------------------------------------------------------
 
 class TestBinaryReward:
     def test_binary_reward_correct(self):

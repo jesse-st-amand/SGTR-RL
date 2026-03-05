@@ -13,9 +13,7 @@ from sgtr_rl.runs import (
     make_run_name,
 )
 
-# ---------------------------------------------------------------------------
 # make_run_name
-# ---------------------------------------------------------------------------
 
 class TestMakeRunName:
     def test_make_run_name_with_overrides(self):
@@ -27,9 +25,7 @@ class TestMakeRunName:
         assert name == "14_sft_pw__20250101_120000"
 
 
-# ---------------------------------------------------------------------------
 # compute_overrides
-# ---------------------------------------------------------------------------
 
 class TestComputeOverrides:
     def test_compute_overrides_detects_changes(self, tmp_path):
@@ -64,9 +60,7 @@ class TestComputeOverrides:
         assert result == ""
 
 
-# ---------------------------------------------------------------------------
 # create_run_dir
-# ---------------------------------------------------------------------------
 
 class TestCreateRunDir:
     def test_create_run_dir_structure(self, tmp_path, sample_config_yaml):
@@ -122,9 +116,7 @@ class TestCreateRunDir:
             assert second_dir == first_dir
 
 
-# ---------------------------------------------------------------------------
 # _find_existing_run
-# ---------------------------------------------------------------------------
 
 class TestFindExistingRun:
     def test_find_existing_run(self, tmp_path):

@@ -14,22 +14,16 @@ def load_jsonl(path: str) -> list[dict]:
     return records
 
 
-def flip_target(target: str) -> str:
-    """Swap "1"<->"2" for label-flipping experiments."""
-    return {"1": "2", "2": "1"}.get(target, target)
-
 
 def validate_training_data(
-    train_path: str,
-    val_path: str,
-    id_field: str = "id",
+    train_records: list[dict],
+    val_records: list[dict],
 ) -> dict:
-    """Validate train/val JSONL files for integrity.
+    """Validate train/val records for integrity.
 
     Args:
-        train_path: Path to training JSONL file.
-        val_path: Path to validation JSONL file.
-        id_field: Name of the record ID field (default: "id").
+        train_records: List of training record dicts.
+        val_records: List of validation record dicts.
 
     Returns:
         Summary dict with counts, ID counts, and target distribution.
@@ -37,13 +31,14 @@ def validate_training_data(
     Raises:
         ValueError: On any integrity failure.
     """
-    train_records = load_jsonl(train_path)
-    val_records = load_jsonl(val_path)
-
     # Schema validation
     for label, records in [("train", train_records), ("val", val_records)]:
         for i, rec in enumerate(records):
-            _validate_record_schema(rec, label, i, id_field)
+            for field in ("prompt", "target", "id"):
+                if field not in rec:
+                    raise ValueError(
+                        f"{label}[{i}]: missing required field '{field}'"
+                    )
 
     # Target value validation
     for label, records in [("train", train_records), ("val", val_records)]:
@@ -59,8 +54,8 @@ def validate_training_data(
             )
 
     # ID overlap check
-    train_ids = {rec[id_field] for rec in train_records}
-    val_ids = {rec[id_field] for rec in val_records}
+    train_ids = {rec["id"] for rec in train_records}
+    val_ids = {rec["id"] for rec in val_records}
     overlap = train_ids & val_ids
     if overlap:
         raise ValueError(
@@ -74,7 +69,7 @@ def validate_training_data(
         for label, records in [("train", train_records), ("val", val_records)]:
             id_counts = defaultdict(int)
             for rec in records:
-                id_counts[rec[id_field]] += 1
+                id_counts[rec["id"]] += 1
             bad_ids = {k: c for k, c in id_counts.items() if c != 2}
             if bad_ids:
                 examples = list(bad_ids.items())[:3]
@@ -120,10 +115,8 @@ def build_conversation(
     prompt = item["prompt"]
 
     if isinstance(prompt, list):
-        # Multi-turn chat format (AT/COLM): already a list of {role, content}
         convo = list(prompt)
     else:
-        # Single string (UT/ICML): wrap in a user message
         convo = [{"role": "user", "content": prompt}]
 
     if use_system_prompt:
@@ -132,13 +125,6 @@ def build_conversation(
             convo.insert(0, {"role": "system", "content": sp})
 
     return convo
-
-
-def _validate_record_schema(rec: dict, label: str, index: int, id_field: str) -> None:
-    """Validate a single record has required fields."""
-    for field in ("prompt", "target", id_field):
-        if field not in rec:
-            raise ValueError(f"{label}[{index}]: missing required field '{field}'")
 
 
 def _detect_format(records: list[dict]) -> str:

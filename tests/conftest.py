@@ -5,9 +5,6 @@ import json
 import pytest
 import yaml
 
-# ---------------------------------------------------------------------------
-# Record builders (flat schema)
-# ---------------------------------------------------------------------------
 
 def _pw_record(id: str, target: str, **extra) -> dict:
     """Build a minimal PW-format record dict (flat schema)."""
@@ -31,20 +28,12 @@ def _ind_record(id: str, target: str, **extra) -> dict:
     }
 
 
-# ---------------------------------------------------------------------------
-# JSONL helper
-# ---------------------------------------------------------------------------
-
 def write_jsonl(path, records: list[dict]) -> None:
     """Write a list of dicts to a JSONL file."""
     with open(path, "w") as f:
         for rec in records:
             f.write(json.dumps(rec) + "\n")
 
-
-# ---------------------------------------------------------------------------
-# Fixtures
-# ---------------------------------------------------------------------------
 
 @pytest.fixture()
 def pw_train_val_files(tmp_path):
@@ -75,13 +64,13 @@ def sample_config_yaml(tmp_path):
         "experiment_name": "14_sft_pw_test",
         "algorithm": "sft",
         "model": {
-            "name": "Qwen/Qwen2-1.5B",
+            "name": "meta-llama/Llama-3.1-8B-Instruct",
             "lora_rank": 32,
         },
         "hyperparameters": {
             "learning_rate": 5e-5,
             "num_epochs": 3,
-            "per_device_train_batch_size": 4,
+            "batch_size": 4,
             "seed": 42,
         },
         "data": {

@@ -12,9 +12,6 @@ from unittest.mock import MagicMock
 import numpy as np
 import pytest
 
-# ---------------------------------------------------------------------------
-# Record builders (flat schema, mirrors tests/conftest.py)
-# ---------------------------------------------------------------------------
 
 def _pw_record(id: str, target: str, **extra) -> dict:
     return {
@@ -32,10 +29,6 @@ def _write_jsonl(path, records: list[dict]) -> None:
             f.write(json.dumps(rec) + "\n")
 
 
-# ---------------------------------------------------------------------------
-# Tinker mock injection
-# ---------------------------------------------------------------------------
-
 @contextmanager
 def patch_tinker_modules(
     answer_text="1",
@@ -48,9 +41,8 @@ def patch_tinker_modules(
         answer_text: What the mock model "generates" (parsed by extract_answer).
         num_sequences: Sequences per sample() call (= group_size for GRPO).
         logprob_value: Logprob value returned by forward_backward (for SFT
-            accuracy testing; values > log(0.5) ≈ -0.693 count as correct).
+            accuracy testing; values > log(0.5) ~ -0.693 count as correct).
     """
-    # --- Build fake modules ---
     module_names = [
         "tinker",
         "tinker.types",
@@ -73,7 +65,6 @@ def patch_tinker_modules(
         mod = builtin_types.ModuleType(name)
         modules[name] = mod
 
-    # Alias shortcuts
     tinker = modules["tinker"]
     tinker_types = modules["tinker.types"]
     tensor_data_mod = modules["tinker.types.tensor_data"]
@@ -89,7 +80,6 @@ def patch_tinker_modules(
     ml_log_mod = modules["tinker_cookbook.utils.ml_log"]
     cookbook_types = modules["tinker_cookbook.types"]
 
-    # Wire parent → child attributes
     tinker.types = tinker_types
     tinker_types.tensor_data = tensor_data_mod
     cookbook.checkpoint_utils = checkpoint_utils
@@ -103,10 +93,9 @@ def patch_tinker_modules(
     utils_mod.ml_log = ml_log_mod
     cookbook.types = cookbook_types
 
-    # --- Configure mock objects ---
     mocks = {}
 
-    # -- Renderer --
+    # Renderer
     renderer = MagicMock(name="renderer")
     renderer.get_stop_sequences.return_value = ["<|end|>"]
 
@@ -115,7 +104,6 @@ def patch_tinker_modules(
     mock_model_input.length = base_prompt_length
 
     def mock_append(chunk):
-        """Return a new model_input with length = base + len(appended tokens)."""
         appended = MagicMock(name="appended_model_input")
         appended.length = base_prompt_length + len(chunk.tokens)
         return appended
@@ -133,34 +121,28 @@ def patch_tinker_modules(
     renderers_mod.TrainOnWhat.LAST_ASSISTANT_MESSAGE = "LAST_ASSISTANT_MESSAGE"
     mocks["renderers_mod"] = renderers_mod
 
-    # -- model_info --
     model_info.get_recommended_renderer_name = MagicMock(return_value="test_renderer")
-
-    # -- tokenizer --
     tokenizer_utils.get_tokenizer = MagicMock(return_value=MagicMock(name="tokenizer"))
 
-    # -- Types --
+    # Types
     tinker_types.AdamParams = MagicMock(name="AdamParams")
     tinker_types.SamplingParams = MagicMock(name="SamplingParams")
     tinker_types.Datum = MagicMock(name="Datum")
     tinker.Datum = tinker_types.Datum
 
-    # EncodedTextChunk must store tokens so append can compute length
     class FakeEncodedTextChunk:
         def __init__(self, tokens):
             self.tokens = tokens
 
     tinker_types.EncodedTextChunk = FakeEncodedTextChunk
 
-    # TensorData.from_torch — just pass through
     tensor_data_mock = MagicMock(name="TensorData")
     tensor_data_mock.from_torch = MagicMock(side_effect=lambda x: x)
     tensor_data_mod.TensorData = tensor_data_mock
 
-    # SamplingParams for cookbook_types (used in benchmark_eval)
     cookbook_types.SamplingParams = MagicMock(name="CookbookSamplingParams")
 
-    # -- ServiceClient → training_client --
+    # ServiceClient -> training_client
     training_client = MagicMock(name="training_client")
     service_client = MagicMock(name="service_client")
     service_client.create_lora_training_client.return_value = training_client
@@ -168,13 +150,11 @@ def patch_tinker_modules(
     mocks["service_client"] = service_client
     mocks["training_client"] = training_client
 
-    # -- forward_backward --
+    # forward_backward
     def make_fwd_bwd_result(datums, loss_fn):
-        """Build a mock forward_backward result with logprobs."""
         logprob_mocks = []
         for _ in datums:
             lp_mock = MagicMock(name="logprob_entry")
-            # Return numpy array — supports .any(), boolean indexing, etc.
             lp_mock.to_torch.return_value = np.array(
                 [0.0] * 9 + [logprob_value]
             )
@@ -190,16 +170,15 @@ def patch_tinker_modules(
         side_effect=make_fwd_bwd_result
     )
 
-    # -- optim_step --
+    # optim_step
     optim_future = MagicMock(name="optim_future")
     optim_future.result.return_value = None
     training_client.optim_step = MagicMock(return_value=optim_future)
 
-    # -- save_weights_and_get_sampling_client → sampling_client --
+    # save_weights_and_get_sampling_client -> sampling_client
     sampling_client = MagicMock(name="sampling_client")
 
     def make_sample_result(prompt, num_samples, sampling_params):
-        """Build a mock sample result with configurable sequences."""
         n = num_samples if num_samples else num_sequences
         sequences = []
         for _ in range(n):
@@ -219,10 +198,9 @@ def patch_tinker_modules(
     )
     mocks["sampling_client"] = sampling_client
 
-    # -- conversation_to_datum --
+    # conversation_to_datum
     def make_datum(convo, renderer_, tokenizer_, train_on_what):
         datum = MagicMock(name="datum")
-        # weights: numpy array with a single positive weight at position 9
         datum.loss_fn_inputs = {
             "weights": MagicMock(
                 to_torch=MagicMock(
@@ -235,20 +213,16 @@ def patch_tinker_modules(
     supervised_data.conversation_to_datum = MagicMock(side_effect=make_datum)
     mocks["conversation_to_datum"] = supervised_data.conversation_to_datum
 
-    # -- compute_mean_nll --
     supervised_common.compute_mean_nll = MagicMock(return_value=0.5)
     mocks["compute_mean_nll"] = supervised_common.compute_mean_nll
 
-    # -- ml_log --
     ml_logger = MagicMock(name="ml_logger")
     ml_log_mod.setup_logging = MagicMock(return_value=ml_logger)
     mocks["ml_logger"] = ml_logger
 
-    # -- checkpoint_utils --
     checkpoint_utils.save_checkpoint = MagicMock()
     mocks["checkpoint_utils"] = checkpoint_utils
 
-    # --- Patch sys.modules ---
     saved = {name: sys.modules.get(name) for name in module_names}
     try:
         for name, mod in modules.items():
@@ -262,10 +236,6 @@ def patch_tinker_modules(
             else:
                 sys.modules[name] = prev
 
-
-# ---------------------------------------------------------------------------
-# Helper: build TinkerContext from mocks
-# ---------------------------------------------------------------------------
 
 def _build_ctx(mocks):
     """Build a TinkerContext from the mock objects returned by patch_tinker_modules."""
@@ -281,17 +251,9 @@ def _build_ctx(mocks):
     )
 
 
-# ---------------------------------------------------------------------------
-# Data fixtures
-# ---------------------------------------------------------------------------
-
 @pytest.fixture()
 def tiny_train_val_files(tmp_path):
-    """Create tiny PW train/val JSONL files (flat schema).
-
-    Train: 4 records (2 IDs x 2 orderings), targets alternate 1/2.
-    Val: 2 records (1 ID x 2 orderings).
-    """
+    """Create tiny PW train/val JSONL files (flat schema)."""
     train_records = [
         _pw_record("train-id-1", "1"),
         _pw_record("train-id-1", "2"),
@@ -330,7 +292,7 @@ def sft_config(tmp_path, tiny_train_val_files):
         experiment_name="test_sft",
         model_name="test-model",
         num_epochs=2,
-        per_device_train_batch_size=2,
+        batch_size=2,
         train_file=train_file,
         val_file=val_file,
         run_dir=run_dir,
@@ -349,7 +311,7 @@ def grpo_config(tmp_path, tiny_train_val_files):
         experiment_name="test_grpo",
         model_name="test-model",
         num_epochs=2,
-        per_device_train_batch_size=2,
+        batch_size=2,
         num_rollouts_per_prompt=2,
         train_file=train_file,
         val_file=val_file,

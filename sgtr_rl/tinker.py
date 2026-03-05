@@ -32,37 +32,37 @@ def setup_tinker(config: TrainingConfig) -> TinkerContext:
     from tinker_cookbook.tokenizer_utils import get_tokenizer
     from tinker_cookbook.utils import ml_log
 
-    cfg = config
-
-    # Tinker setup
-    logger.info(f"Connecting to Tinker (model={cfg.model_name}, lora_rank={cfg.lora_rank})...")
+    logger.info(
+        f"Connecting to Tinker (model={config.model_name}, lora_rank={config.lora_rank})..."
+    )
     service_client = tinker.ServiceClient()
     training_client = service_client.create_lora_training_client(
-        base_model=cfg.model_name, rank=cfg.lora_rank
+        base_model=config.model_name, rank=config.lora_rank
     )
     logger.info("Tinker training client created")
 
-    tokenizer = get_tokenizer(cfg.model_name)
-    renderer_name = model_info.get_recommended_renderer_name(cfg.model_name)
+    tokenizer = get_tokenizer(config.model_name)
+    renderer_name = model_info.get_recommended_renderer_name(config.model_name)
     renderer = renderers.get_renderer(renderer_name, tokenizer)
     logger.info(f"Using renderer: {renderer_name}")
 
     eval_params = types.SamplingParams(
-        max_tokens=cfg.max_completion_length,
+        max_tokens=config.max_completion_length,
         stop=renderer.get_stop_sequences(),
         temperature=0.0,
     )
     adam_params = types.AdamParams(
-        learning_rate=cfg.learning_rate, beta1=0.9, beta2=0.95, eps=1e-8
+        learning_rate=config.learning_rate, beta1=0.9, beta2=0.95, eps=1e-8
     )
 
-    # Metrics logging (wandb + JSON)
-    log_dir = str(__import__("pathlib").Path(cfg.run_dir) / "metrics") if cfg.run_dir else None
+    from pathlib import Path
+
+    log_dir = str(Path(config.run_dir) / "metrics") if config.run_dir else None
     ml_logger = ml_log.setup_logging(
         log_dir=log_dir or ".",
-        wandb_project=cfg.wandb_project,
-        wandb_name=cfg.experiment_name,
-        config=cfg,
+        wandb_project=config.wandb_project,
+        wandb_name=config.experiment_name,
+        config=config,
         do_configure_logging_module=False,
     )
 

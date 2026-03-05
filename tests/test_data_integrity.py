@@ -15,8 +15,9 @@ import pytest
 
 from sgtr_rl.data import validate_training_data
 
-PW_TRAIN = Path("data/training_data/ll-3.1-8b_ICML_01_UT_PW-Q_Rec_NPr_FA_Inst_vs_qwen-2.5-7b/train.jsonl")
-PW_VAL = Path("data/training_data/ll-3.1-8b_ICML_01_UT_PW-Q_Rec_NPr_FA_Inst_vs_qwen-2.5-7b/val.jsonl")
+_PW_DIR = "data/training_data/ll-3.1-8b_ICML_01_UT_PW-Q_Rec_NPr_FA_Inst_vs_qwen-2.5-7b"
+PW_TRAIN = Path(_PW_DIR) / "train.jsonl"
+PW_VAL = Path(_PW_DIR) / "val.jsonl"
 MMLU = Path("data/benchmarks/mmlu.jsonl")
 
 pw_data_exists = pytest.mark.skipif(
@@ -50,9 +51,7 @@ def _is_flat_format(records: list[dict]) -> bool:
     return len(records) > 0 and "id" in records[0]
 
 
-# ---------------------------------------------------------------------------
 # PW data validation
-# ---------------------------------------------------------------------------
 
 @pytest.mark.datasci
 @pw_data_exists
@@ -62,7 +61,8 @@ class TestPWDataIntegrity:
         train = _load_jsonl(PW_TRAIN)
         if not _is_flat_format(train):
             pytest.skip("Data uses old nested format — re-extract with prepare_data.py")
-        result = validate_training_data(str(PW_TRAIN), str(PW_VAL))
+        val = _load_jsonl(PW_VAL)
+        result = validate_training_data(train, val)
         assert result["format"] == "pw"
 
     def test_pw_no_id_leakage(self):
@@ -90,9 +90,7 @@ class TestPWDataIntegrity:
         assert len(val) == 100
 
 
-# ---------------------------------------------------------------------------
 # Benchmark data validation
-# ---------------------------------------------------------------------------
 
 @pytest.mark.datasci
 @benchmark_data_exists

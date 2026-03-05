@@ -3,12 +3,11 @@
 import pytest
 
 from sgtr_rl.benchmarks import (
-    _subsample,
     extract_mmlu_answer,
     format_mmlu_prompt,
     should_run_benchmark,
+    subsample,
 )
-from sgtr_rl.data import flip_target
 
 SAMPLE_ITEM = {
     "question": "What is the capital of France?",
@@ -18,9 +17,7 @@ SAMPLE_ITEM = {
 }
 
 
-# ---------------------------------------------------------------------------
 # format_mmlu_prompt
-# ---------------------------------------------------------------------------
 
 class TestFormatMMLUPrompt:
     def test_format_mmlu_prompt_nocot(self):
@@ -46,9 +43,7 @@ class TestFormatMMLUPrompt:
         assert instruction_pos < question_pos
 
 
-# ---------------------------------------------------------------------------
 # extract_mmlu_answer
-# ---------------------------------------------------------------------------
 
 class TestExtractMMLUAnswer:
     @pytest.mark.parametrize("text,expected", [
@@ -88,60 +83,40 @@ class TestExtractMMLUAnswer:
         assert extract_mmlu_answer("ANSWER: B\nSo ANSWER: B") == "B"
 
 
-# ---------------------------------------------------------------------------
-# flip_target (from data)
-# ---------------------------------------------------------------------------
 
-class TestFlipTarget:
-    def test_flip_target_1_to_2(self):
-        assert flip_target("1") == "2"
-
-    def test_flip_target_2_to_1(self):
-        assert flip_target("2") == "1"
-
-    def test_flip_target_other_unchanged(self):
-        assert flip_target("A") == "A"
-        assert flip_target("") == ""
-        assert flip_target("3") == "3"
-
-
-# ---------------------------------------------------------------------------
-# _subsample
-# ---------------------------------------------------------------------------
+# subsample
 
 class TestSubsample:
-    def test_subsample_returns_subset(self):
+    def testsubsample_returns_subset(self):
         data = [{"id": i} for i in range(100)]
-        result = _subsample(data, 10)
+        result = subsample(data, 10)
         assert len(result) == 10
         assert all(item in data for item in result)
 
-    def test_subsample_none_returns_all(self):
+    def testsubsample_none_returns_all(self):
         data = [{"id": i} for i in range(10)]
-        result = _subsample(data, None)
+        result = subsample(data, None)
         assert result is data
 
-    def test_subsample_exceeds_data(self):
+    def testsubsample_exceeds_data(self):
         data = [{"id": i} for i in range(5)]
-        result = _subsample(data, 100)
+        result = subsample(data, 100)
         assert result is data
 
-    def test_subsample_deterministic(self):
+    def testsubsample_deterministic(self):
         data = [{"id": i} for i in range(100)]
-        r1 = _subsample(data, 10, seed=42)
-        r2 = _subsample(data, 10, seed=42)
+        r1 = subsample(data, 10, seed=42)
+        r2 = subsample(data, 10, seed=42)
         assert r1 == r2
 
-    def test_subsample_different_seeds_differ(self):
+    def testsubsample_different_seeds_differ(self):
         data = [{"id": i} for i in range(100)]
-        r1 = _subsample(data, 10, seed=42)
-        r2 = _subsample(data, 10, seed=99)
+        r1 = subsample(data, 10, seed=42)
+        r2 = subsample(data, 10, seed=99)
         assert r1 != r2
 
 
-# ---------------------------------------------------------------------------
 # should_run_benchmark
-# ---------------------------------------------------------------------------
 
 class TestShouldRunBenchmark:
     def test_should_run_baseline_always(self):

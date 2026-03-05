@@ -20,9 +20,10 @@ SGTR-RL/
 │   ├── pipeline.py               # run_training() orchestration
 │   ├── sft.py                    # train_sft() function
 │   ├── grpo.py                   # train_grpo() function
-│   ├── data.py                   # load_jsonl, flip_target, validate_training_data
-│   ├── eval.py                   # Val eval (accuracy + NLL)
-│   ├── benchmarks.py             # MMLU + SGTR cross-eval
+│   ├── data.py                   # load_jsonl, validate_training_data, build_conversation
+│   ├── tinker_eval.py            # Tinker-based eval (val accuracy/NLL, MMLU, SGTR cross-eval)
+│   ├── benchmarks.py             # Pure benchmark logic (prompt formatting, scheduling)
+│   ├── metrics.py                # Metric logging and prediction saving
 │   ├── runs.py                   # Run directory creation
 │   ├── logging_setup.py          # Dual logging setup
 │   └── plotting.py               # Summary plot generation
@@ -51,9 +52,10 @@ SGTR-RL/
 | `pipeline.py` | `run_training()` — full pipeline orchestration: load data → validate → setup tinker → baseline eval → train → checkpoint → plot → close. |
 | `sft.py` | `train_sft(config, ctx, prompts, val_prompts)` — SFT training loop. Cross-entropy loss on (prompt, target) pairs with assistant-token masking. |
 | `grpo.py` | `train_grpo(config, ctx, prompts, val_prompts)` — GRPO training loop: sample rollouts, compute rewards, center advantages within groups, build Tinker datums, call `forward_backward` + `optim_step`. |
-| `data.py` | `load_jsonl()`, `flip_target()`, `validate_training_data()` — data loading and integrity validation (schema, targets, ID overlap, PW ordering). |
-| `eval.py` | Shared validation evaluation logic. `evaluate_val()` (greedy accuracy), `compute_val_nll()` (forward-pass NLL), `run_val_eval()`. |
-| `benchmarks.py` | Benchmark evaluation during training. `type: mmlu` (inspect-ai compatible prompt format) and `type: sgtr` (cross-eval with `flip_targets`, `num_samples`). |
+| `data.py` | `load_jsonl()`, `validate_training_data()`, `build_conversation()` — data loading, integrity validation, and conversation construction. |
+| `tinker_eval.py` | Tinker-based evaluation. Orchestrators `run_val_eval(prompts, ctx, ...)` and `run_benchmark_evals(configs, ctx, ...)` accept `TinkerContext`. Lower-level: `evaluate_val()`, `compute_val_nll()`, `evaluate_benchmark()` (MMLU), `evaluate_sgtr_benchmark()` (cross-eval). |
+| `benchmarks.py` | Pure benchmark logic (no Tinker deps). `format_mmlu_prompt()`, `extract_mmlu_answer()`, `should_run_benchmark()`, `_subsample()`, `load_benchmark_data()`. |
+| `metrics.py` | Metric logging and prediction saving. `log_val_result()`, `log_val_metrics()`, `save_val_predictions()`. |
 | `runs.py` | Creates structured run directories under `results/`. Handles run naming, config freezing, and existing-run policies. |
 | `plotting.py` | `generate_summary_plot()` — 3-subplot summary figure (loss, accuracy, benchmarks) from `metrics/metrics.jsonl`. |
 | `logging_setup.py` | Dual logging to terminal + file. |
@@ -62,9 +64,9 @@ SGTR-RL/
 
 | Script | Purpose | Example |
 |--------|---------|---------|
-| `train.py` | Main training entry point | `python -m scripts.train --config experiments/15_.../config.yaml` |
+| `train.py` | Main training entry point | `python -m scripts.train --config experiments/01_.../config.yaml` |
 | `prepare_data.py` | Download from HuggingFace + extract training data | `python -m scripts.prepare_data --evaluator ll-3.1-8b` |
-| `prepare_mmlu.py` | Download MMLU and prepare benchmark JSONL files | `python -m scripts.prepare_mmlu` |
+| `prepare_mmlu.py` | Download MMLU and prepare benchmark JSONL | `python -m scripts.prepare_mmlu` |
 | `plot_cross_evals.py` | Plot cross-eval results across experiments | `python -m scripts.plot_cross_evals` |
 
 ## Training Data Format (Flat Schema)
@@ -76,15 +78,34 @@ All training records use a flat JSON schema:
 ```
 
 Core fields (required by training): `prompt`, `target`, `id`
-Optional fields (used by benchmark filtering): `format`, `opponent_model`, `is_control`
-
-Field names are configurable in TrainingConfig via `prompt_field`, `target_field`, `id_field`.
+Optional fields (metadata): `format`, `opponent_model`, `is_control`, `system_prompt`
 
 **Pairwise (PW):** Each ID has exactly 2 records (both response orderings). Train/val splits are done at the ID level to prevent leakage.
 
 **Individual (IND):** Each ID has 1 record.
 
 Targets are always `"1"` or `"2"`.
+
+### Extraction Metadata
+
+Each extracted training data directory includes a `metadata.json`:
+
+```json
+{
+  "evaluator": "ll-3.1-8b",
+  "experiment": "ICML_01_UT_PW-Q_Rec_NPr_FA_Inst",
+  "opponent": "qwen-2.5-7b",
+  "format": "pw",
+  "extraction": {
+    "cot": false,
+    "train_ratio": 0.8,
+    "seed": 42,
+    "train_size": 396,
+    "val_size": 100,
+    "eval_dirs": ["..."]
+  }
+}
+```
 
 ## How Training Works
 
@@ -97,8 +118,8 @@ Training uses plain functions + a shared `TinkerContext` dataclass:
 def run_training(config):
     prompts = load_prompts(config)
     val_prompts = load_val_prompts(config)
-    validate_training_data(config.train_file, config.val_file)
-    ctx = setup_tinker(config)        # TinkerContext with training_client, renderer, etc.
+    validate_training_data(prompts, val_prompts)
+    ctx = setup_tinker(config)
     run_baseline_eval(ctx, ...)       # Epoch 0 baseline
     train_fn = {"sft": train_sft, "grpo": train_grpo}[config.algorithm]
     global_step = train_fn(config, ctx, prompts, val_prompts)
@@ -128,20 +149,6 @@ Key insight: GRPO needs **within-group variance** to learn. If all rollouts for 
 
 Each experiment is a YAML file defining model, data, hyperparameters, and evaluation tasks.
 
-| Experiment | Description | Status |
-|-----------|-------------|--------|
-| `14_sft_pw_uuid_split` | SFT on PW with UUID-level split (160 train, 40 val) | Completed |
-| `15_sft_pw_rec_vs_qwen` | SFT PW recognition, Llama vs Qwen (158 train, 38 val) | Completed |
-| `16_sft_ind_rec_vs_qwen` | SFT IND recognition, Llama vs Qwen | Completed |
-| `17_sft_pw_rec_flipped_vs_qwen` | SFT PW recognition flipped (anti-self), Llama vs Qwen | Completed |
-| `18_sft_ind_rec_flipped_vs_qwen` | SFT IND recognition flipped (anti-self), Llama vs Qwen | Completed |
-| `19_sft_pw_rec_vs_haiku` | SFT PW recognition, Llama vs Haiku-3.5 | Completed |
-| `20_sft_pw_rec_vs_gpt4o` | SFT PW recognition, Llama vs GPT-4o | Completed |
-| `21_sft_pw_rec_vs_ll70b` | SFT PW recognition, Llama vs Llama-3.1-70B | Completed |
-| `22_sft_pw_rec_vs_opus` | SFT PW recognition, Llama vs Claude Opus | Completed |
-
-Experiments 15-22 share a common structure: they train Llama-3.1-8B on SGTR with cross-domain and cross-format evals (MMLU, cross-format SGTR, wikisum, pku, bigcode benchmarks).
-
 ## How to Run Things
 
 ### Prerequisites
@@ -154,11 +161,10 @@ cp .env.template .env       # Add TINKER_API_KEY
 ### Training
 
 ```bash
-# Run an experiment
-python -m scripts.train --config experiments/15_sft_pw_rec_vs_qwen/config.yaml
+python -m scripts.train --config experiments/01_sft_pw_vs_qwen/config.yaml
 
 # With CLI overrides
-python -m scripts.train --config experiments/15_.../config.yaml \
+python -m scripts.train --config experiments/01_.../config.yaml \
     --learning_rate 1e-4 --num_epochs 5
 
 # Skip if run already exists
@@ -170,15 +176,15 @@ python -m scripts.train --config ... --exists skip
 ```bash
 # Download from HuggingFace and extract in one step:
 python -m scripts.prepare_data --evaluator ll-3.1-8b
+
+# Download MMLU benchmark data:
+python -m scripts.prepare_mmlu
 ```
 
 ### Analysis
 
 ```bash
-# Cross-eval analysis across experiments
 python -m scripts.plot_cross_evals
-
-# W&B (metrics are logged automatically during training)
 ```
 
 ## Development
@@ -187,7 +193,7 @@ python -m scripts.plot_cross_evals
 
 ```bash
 uv sync                    # Install/update dependencies
-uv add <package>           # Add a new dependency (updates pyproject.toml + uv.lock)
+uv add <package>           # Add a new dependency
 uv run ruff check .        # Lint
 uv run ruff format .       # Format
 ```
@@ -200,39 +206,20 @@ uv run pytest -m datasci     # Data integrity tests only
 uv run pytest --co           # Dry-run: confirm test discovery
 ```
 
-Tests live in `tests/` and cover:
-
-| File | What it tests |
-|------|--------------|
-| `test_validate_data.py` | Data validation — ID leakage, schema, targets, PW ordering |
-| `test_reward.py` | Answer extraction and binary reward |
-| `test_benchmark_eval.py` | MMLU prompt formatting, answer extraction, schedule logic |
-| `test_run_dir.py` | Run naming, override computation, directory creation |
-| `test_train_config.py` | YAML config loading, defaults |
-| `test_plot_summary.py` | Title building, smoothing, summary plot generation |
-| `test_data_integrity.py` | Validates actual data files on disk (marked `@datasci`) |
-| `test_download_hf_data.py` | HF data download: filename parsing, format detection, filtering |
-| `integration/test_sft_lowlevel.py` | SFT pipeline: cross-entropy loss, accuracy threshold, eval schedule, batching |
-| `integration/test_grpo_lowlevel.py` | GRPO pipeline: importance sampling loss, advantage centering, zero-signal skipping, reward wiring, datum construction |
-| `integration/test_highlevel.py` | Loop structure for both trainers: eval/benchmark schedules, step counts, sampling order |
-
-Integration tests mock Tinker at the `sys.modules` level (see `integration/conftest.py`) so the full training loop runs without GPU access.
-
 ### Experiment Config Schema
 
 ```yaml
 experiment_name: "descriptive_name"
 description: "What this experiment tests"
 
-algorithm: sft               # grpo | sft
+algorithm: sft               # grpo | sft (default: sft)
 
 data:
-  evaluator_model: ll-3.1-8b            # Short name of the model being trained
   generator_models: [qwen-2.5-7b]       # "Other" model(s) in the SGTR data
-  dataset: sharegpt                      # Dataset source
-  subsets: [english_26, english2_74]     # Dataset subsets
+  dataset: sharegpt                      # Dataset source (used for plot titles)
   train_file: data/training_data/.../train.jsonl
   val_file: data/training_data/.../val.jsonl
+  use_system_prompt: false               # Prepend system_prompt from records
 
 model:
   name: meta-llama/Llama-3.1-8B-Instruct
@@ -243,7 +230,7 @@ wandb_project: sgtr-rl       # Optional: W&B project name (omit to disable)
 hyperparameters:
   learning_rate: 5.0e-5
   num_epochs: 20
-  per_device_train_batch_size: 16
+  batch_size: 16
   max_completion_length: 512
   sampling_temperature: 1.0    # Controls rollout diversity (GRPO only)
   seed: 42
@@ -254,28 +241,23 @@ benchmark_evals:
     data_file: data/benchmarks/mmlu.jsonl
     num_samples: 20                  # Deterministic subsample (omit for all)
     schedule: every_epoch            # "every_epoch" | "every_N_epochs" | "end_only"
-    cot: false                       # Chain-of-thought (non-CoT uses max_tokens=16)
+    cot: false                       # Chain-of-thought (non-CoT uses max_tokens=128)
   cross_ind_val:
     type: sgtr
-    data_file: data/training_data/ll-3.1-8b_ICML_02_UT_IND-Q_Rec_NPr_FA_Inst_vs_qwen-2.5-7b-treatment/val.jsonl
+    data_file: data/training_data/.../val.jsonl
     schedule: every_5_epochs
     frequency: 5                     # For every_N_epochs schedule
-    flip_targets: false              # Swap "1"<->"2" at eval time
     num_samples: 78
 ```
 
-#### Cross-Eval and Label Flipping
-
-`flip_targets` in `benchmark_evals` swaps target labels "1" and "2" at eval time — useful for cross-evaluation where the label mapping differs between datasets.
-
 `num_samples` subsamples benchmark data deterministically (seed=42).
 
-#### MMLU Prompt Format
+### MMLU Prompt Format
 
 MMLU prompts use the inspect-ai 0-shot template:
 - Choices formatted as `A) text` (not `A. text`)
 - Instruction uses `'ANSWER: $LETTER'` format
-- Non-CoT: `max_tokens=16` to prevent hidden reasoning
+- Non-CoT: `max_tokens=128` to prevent hidden reasoning
 - CoT: full token budget with "Think step by step" instruction
 
 ## Key Dependencies

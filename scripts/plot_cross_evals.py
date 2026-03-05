@@ -136,8 +136,6 @@ def get_experiment_info(config: dict) -> dict:
     data = config.get("data", {})
     generators = data.get("generator_models", [])
     other_model = generators[0] if generators else "unknown"
-    flip = data.get("flip_targets", False)
-
     # Detect format from train file path
     train_file = data.get("train_file", "")
     if "_pw/" in train_file or "_pw." in train_file:
@@ -150,7 +148,6 @@ def get_experiment_info(config: dict) -> dict:
     return {
         "other_model": other_model,
         "format": fmt,
-        "flipped": flip,
         "description": config.get("description", ""),
     }
 
@@ -205,8 +202,8 @@ def plot_before_after(experiments: dict, output_dir: Path):
         ax.set_ylim(0, 1.1)
         ax.legend(loc="upper left", fontsize=9)
 
-        flip_str = " [FLIPPED]" if info["flipped"] else ""
-        ax.set_title(f"{exp_name}\n{info['format']} Rec vs {_MODEL_DISPLAY.get(info['other_model'], info['other_model'])}{flip_str}")
+        model_str = _MODEL_DISPLAY.get(info['other_model'], info['other_model'])
+        ax.set_title(f"{exp_name}\n{info['format']} Rec vs {model_str}")
 
         plt.tight_layout()
         fig.savefig(output_dir / f"before_after_{exp_name}.png", dpi=150, bbox_inches="tight")
@@ -217,13 +214,12 @@ def plot_before_after(experiments: dict, output_dir: Path):
 def plot_model_heatmap(experiments: dict, output_dir: Path):
     """Plot heatmap of final cross-eval accuracy by training model.
 
-    Only includes PW rec (non-flipped) experiments to keep comparison clean.
+    Only includes PW rec experiments.
     """
-    # Filter to PW rec, non-flipped experiments
     pw_exps = {}
     for name, data in experiments.items():
         info = get_experiment_info(data["config"])
-        if info["format"] == "PW" and not info["flipped"]:
+        if info["format"] == "PW":
             pw_exps[info["other_model"]] = data
 
     if len(pw_exps) < 2:
@@ -327,7 +323,7 @@ def plot_cross_eval_curves(experiments: dict, output_dir: Path):
         # Compute steps per epoch from config
         config = exp_data["config"]
         hp = config.get("hyperparameters", {})
-        bs = hp.get("per_device_train_batch_size", 16)
+        bs = hp.get("batch_size", hp.get("per_device_train_batch_size", 16))
         train_file = config.get("data", {}).get("train_file", "")
         if train_file and Path(train_file).exists():
             with open(train_file) as f:
@@ -353,8 +349,8 @@ def plot_cross_eval_curves(experiments: dict, output_dir: Path):
         ax.legend(fontsize=8, loc="best")
         ax.grid(True, alpha=0.3)
 
-        flip_str = " [FLIPPED]" if info["flipped"] else ""
-        ax.set_title(f"Cross-Eval Learning Curves: {exp_name}\n{info['format']} Rec vs {_MODEL_DISPLAY.get(info['other_model'], info['other_model'])}{flip_str}")
+        model_str = _MODEL_DISPLAY.get(info['other_model'], info['other_model'])
+        ax.set_title(f"Cross-Eval Learning Curves: {exp_name}\n{info['format']} Rec vs {model_str}")
 
         plt.tight_layout()
         fig.savefig(output_dir / f"curves_{exp_name}.png", dpi=150, bbox_inches="tight")
@@ -362,85 +358,13 @@ def plot_cross_eval_curves(experiments: dict, output_dir: Path):
         logger.info(f"Saved curves_{exp_name}.png")
 
 
-def plot_flipped_comparison(experiments: dict, output_dir: Path):
-    """Compare normal vs flipped experiments side by side."""
-    # Find matching normal/flipped pairs
-    pairs = []
-
-    for name, data in experiments.items():
-        info = get_experiment_info(data["config"])
-        if info["flipped"]:
-            # Find the matching non-flipped experiment
-            for other_name, other_data in experiments.items():
-                other_info = get_experiment_info(other_data["config"])
-                if (not other_info["flipped"]
-                    and other_info["format"] == info["format"]
-                    and other_info["other_model"] == info["other_model"]):
-                    pairs.append((other_name, name, info["format"], info["other_model"]))
-                    break
-
-    if not pairs:
-        logger.info("No flipped pairs found")
-        return
-
-    for normal_name, flipped_name, fmt, model in pairs:
-        normal_bench = extract_benchmark_series(experiments[normal_name]["records"])
-        flipped_bench = extract_benchmark_series(experiments[flipped_name]["records"])
-
-        eval_names = sorted(set(
-            e for e in _ALL_CROSS_EVALS
-            if e in normal_bench and e in flipped_bench
-            and len(normal_bench[e]["values"]) >= 2
-        ), key=lambda e: _ALL_CROSS_EVALS.index(e) if e in _ALL_CROSS_EVALS else 99)
-
-        if not eval_names:
-            continue
-
-        fig, ax = plt.subplots(figsize=(max(8, len(eval_names) * 1.5), 5))
-        x = np.arange(len(eval_names))
-        width = 0.25
-
-        baselines = [normal_bench[e]["values"][0] for e in eval_names]
-        normal_finals = [normal_bench[e]["values"][-1] for e in eval_names]
-        flipped_finals = [flipped_bench[e]["values"][-1] for e in eval_names]
-
-        labels = [_BENCH_DISPLAY.get(e, e) for e in eval_names]
-
-        bars0 = ax.bar(x - width, baselines, width, label="Baseline (epoch 0)",
-                       color="#94a3b8", edgecolor="white", linewidth=0.5)
-        bars1 = ax.bar(x, normal_finals, width, label="Normal labels",
-                       color="#3b82f6", edgecolor="white", linewidth=0.5)
-        bars2 = ax.bar(x + width, flipped_finals, width, label="Flipped labels",
-                       color="#ef4444", edgecolor="white", linewidth=0.5)
-
-        for bars, color in [(bars0, "#64748b"), (bars1, "#1e40af"), (bars2, "#991b1b")]:
-            for bar in bars:
-                h = bar.get_height()
-                ax.text(bar.get_x() + bar.get_width() / 2, h + 0.01, f"{h:.0%}",
-                        ha="center", va="bottom", fontsize=7, color=color)
-
-        ax.axhline(y=0.5, color="#cbd5e1", linestyle="--", linewidth=0.8, label="Chance")
-        ax.set_ylabel("Accuracy")
-        ax.set_xticks(x)
-        ax.set_xticklabels(labels, rotation=30, ha="right")
-        ax.set_ylim(0, 1.15)
-        ax.legend(fontsize=9)
-        ax.set_title(f"Normal vs Flipped Labels: {fmt} Rec vs {_MODEL_DISPLAY.get(model, model)}")
-
-        plt.tight_layout()
-        fig.savefig(output_dir / f"flipped_comparison_{fmt.lower()}_{model}.png",
-                    dpi=150, bbox_inches="tight")
-        plt.close(fig)
-        logger.info(f"Saved flipped_comparison_{fmt.lower()}_{model}.png")
-
 
 def plot_combined_overview(experiments: dict, output_dir: Path):
     """Single overview figure with all PW rec experiments' cross-eval results."""
-    # Collect all PW rec (non-flipped) experiments
     pw_exps = {}
     for name, data in experiments.items():
         info = get_experiment_info(data["config"])
-        if info["format"] == "PW" and not info["flipped"]:
+        if info["format"] == "PW":
             pw_exps[name] = (data, info)
 
     if len(pw_exps) < 2:
@@ -542,16 +466,15 @@ def plot_format_comparison(experiments: dict, output_dir: Path):
 
     Diagonal = val accuracy (in-distribution), off-diagonal = cross-eval.
     """
-    # Group experiments by (other_model, flipped)
-    by_key: dict[tuple, dict[str, tuple]] = {}
+    by_model: dict[str, dict[str, tuple]] = {}
     for name, data in experiments.items():
         info = get_experiment_info(data["config"])
-        key = (info["other_model"], info["flipped"])
-        if key not in by_key:
-            by_key[key] = {}
-        by_key[key][info["format"]] = (name, data, info)
+        model = info["other_model"]
+        if model not in by_model:
+            by_model[model] = {}
+        by_model[model][info["format"]] = (name, data, info)
 
-    for (model, flipped), formats in by_key.items():
+    for model, formats in by_model.items():
         if "PW" not in formats or "IND" not in formats:
             continue
 
@@ -614,17 +537,15 @@ def plot_format_comparison(experiments: dict, output_dir: Path):
 
         fig.colorbar(im, ax=ax, label="Accuracy", shrink=0.8)
 
-        flip_str = " [FLIPPED]" if flipped else ""
         model_str = _MODEL_DISPLAY.get(model, model)
-        ax.set_title(f"PW vs IND Transfer: Llama-3.1-8B vs {model_str}\nShareGPT{flip_str}",
+        ax.set_title(f"PW vs IND Transfer: Llama-3.1-8B vs {model_str}\nShareGPT",
                      fontsize=16, fontweight="bold")
 
         plt.tight_layout()
-        flip_suffix = "_flipped" if flipped else ""
-        fig.savefig(output_dir / f"format_comparison_{model}{flip_suffix}.png",
+        fig.savefig(output_dir / f"format_comparison_{model}.png",
                     dpi=150, bbox_inches="tight")
         plt.close(fig)
-        logger.info(f"Saved format_comparison_{model}{flip_suffix}.png")
+        logger.info(f"Saved format_comparison_{model}.png")
 
 
 def plot_mmlu_summary(experiments: dict, output_dir: Path):
@@ -659,7 +580,7 @@ def plot_mmlu_summary(experiments: dict, output_dir: Path):
         # Compute epochs
         config = ed["config"]
         hp = config.get("hyperparameters", {})
-        bs = hp.get("per_device_train_batch_size", 16)
+        bs = hp.get("batch_size", hp.get("per_device_train_batch_size", 16))
         train_file = config.get("data", {}).get("train_file", "")
         if train_file and Path(train_file).exists():
             with open(train_file) as f:
@@ -671,9 +592,8 @@ def plot_mmlu_summary(experiments: dict, output_dir: Path):
         epochs = np.array(series["steps"]) / bpe
         vals = series["values"]
 
-        flip_str = " [F]" if info["flipped"] else ""
         model_str = _MODEL_DISPLAY.get(info["other_model"], info["other_model"])
-        label = f"{info['format']} vs {model_str}{flip_str}"
+        label = f"{info['format']} vs {model_str}"
 
         ax.plot(epochs, vals, "o-", color=colors[i % 10], markersize=3,
                 linewidth=1.2, alpha=0.8, label=label)
@@ -699,9 +619,8 @@ def plot_mmlu_summary(experiments: dict, output_dir: Path):
 
     for name, ed in exp_mmlu.items():
         info = ed["info"]
-        flip_str = " [F]" if info["flipped"] else ""
         model_str = _MODEL_DISPLAY.get(info["other_model"], info["other_model"])
-        label = f"{info['format']} vs {model_str}{flip_str}"
+        label = f"{info['format']} vs {model_str}"
         names.append(label)
 
         if "mmlu_20" in ed["bench"]:
@@ -807,7 +726,6 @@ def main():
     plot_before_after(experiments, output_dir)
     plot_model_heatmap(experiments, output_dir)
     plot_cross_eval_curves(experiments, output_dir)
-    plot_flipped_comparison(experiments, output_dir)
     plot_combined_overview(experiments, output_dir)
     plot_format_comparison(experiments, output_dir)
     plot_mmlu_summary(experiments, output_dir)

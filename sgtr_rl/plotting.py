@@ -42,7 +42,7 @@ _BENCH_DISPLAY = {
 # Default hyperparams (only show overrides in title)
 _DEFAULTS = {
     "learning_rate": 5e-5,
-    "per_device_train_batch_size": 16,
+    "batch_size": 16,
     "lora_rank": 32,
     "num_epochs": 20,
     "seed": 42,
@@ -75,8 +75,8 @@ def _build_title(config: dict) -> str:
     rank = model_cfg.get("lora_rank", _DEFAULTS["lora_rank"])
     if rank != _DEFAULTS["lora_rank"]:
         param_parts.append(f"rank={rank}")
-    bs = hp.get("per_device_train_batch_size", _DEFAULTS["per_device_train_batch_size"])
-    if bs != _DEFAULTS["per_device_train_batch_size"]:
+    bs = hp.get("batch_size", _DEFAULTS["batch_size"])
+    if bs != _DEFAULTS["batch_size"]:
         param_parts.append(f"bs={bs}")
 
     dataset = data_cfg.get("dataset", "").capitalize() or "?"
@@ -137,7 +137,7 @@ def generate_summary_plot(run_dir: str | Path) -> Path:
     else:
         # Fallback: compute from config
         hp = config.get("hyperparameters", {})
-        bs = hp.get("per_device_train_batch_size", 16)
+        bs = hp.get("batch_size", 16)
         # Try to count training samples from train file
         train_file = config.get("data", {}).get("train_file", "")
         if train_file and Path(train_file).exists():
@@ -187,7 +187,6 @@ def generate_summary_plot(run_dir: str | Path) -> Path:
     fig, axes = plt.subplots(3, 1, figsize=(10, 10), sharex=True)
     fig.suptitle(title, fontsize=11, fontweight="bold")
 
-    # --- Top: Loss ---
     ax = axes[0]
     train_nll_arr = np.array(train_nll)
     ax.plot(train_epochs, train_nll_arr, alpha=0.3, color="C0", lw=0.8)
@@ -203,7 +202,6 @@ def generate_summary_plot(run_dir: str | Path) -> Path:
     ax.legend(fontsize=9)
     ax.grid(True, alpha=0.3)
 
-    # --- Middle: Accuracy ---
     ax = axes[1]
     train_acc_arr = np.array(train_acc)
     ax.plot(train_epochs, train_acc_arr, alpha=0.3, color="C0", lw=0.8)
@@ -220,7 +218,6 @@ def generate_summary_plot(run_dir: str | Path) -> Path:
     ax.legend(fontsize=9)
     ax.grid(True, alpha=0.3)
 
-    # --- Bottom: Benchmarks ---
     ax = axes[2]
     colors = ["C2", "C3", "C4", "C5", "C6"]
     for i, (name, (epochs, values)) in enumerate(sorted(bench_epochs.items())):

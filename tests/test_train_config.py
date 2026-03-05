@@ -9,9 +9,6 @@ from sgtr_rl.config import (
     load_training_config,
 )
 
-# ---------------------------------------------------------------------------
-# load_training_config
-# ---------------------------------------------------------------------------
 
 class TestLoadTrainingConfig:
     def test_load_full_config(self, tmp_path):
@@ -25,7 +22,7 @@ class TestLoadTrainingConfig:
             "hyperparameters": {
                 "learning_rate": 1e-4,
                 "num_epochs": 5,
-                "per_device_train_batch_size": 8,
+                "batch_size": 8,
                 "seed": 123,
                 "num_rollouts_per_prompt": 8,
                 "max_completion_length": 512,
@@ -57,9 +54,12 @@ class TestLoadTrainingConfig:
 
         cfg = load_training_config(str(path))
         assert cfg.experiment_name == "minimal"
-        assert cfg.algorithm == "grpo"  # default
-        assert cfg.learning_rate == 5e-5  # default
-        assert cfg.lora_rank == 32  # default
+        assert cfg.algorithm == "sft"
+        assert cfg.learning_rate == 5e-5
+        assert cfg.lora_rank == 32
+        assert cfg.model_name == "meta-llama/Llama-3.1-8B-Instruct"
+        assert cfg.batch_size == 16
+        assert cfg.num_epochs == 20
         assert cfg.benchmark_evals == []
 
     def test_load_with_benchmarks(self, tmp_path):
@@ -102,7 +102,6 @@ class TestLoadTrainingConfig:
                     "type": "sgtr",
                     "data_file": "data/training_data/sharegpt_ind/val.jsonl",
                     "schedule": "every_epoch",
-                    "flip_targets": True,
                     "num_samples": 50,
                 },
                 "mmlu_canary": {
@@ -121,12 +120,10 @@ class TestLoadTrainingConfig:
 
         sgtr_bench = next(b for b in cfg.benchmark_evals if b.name == "cross_ind_val")
         assert sgtr_bench.type == "sgtr"
-        assert sgtr_bench.flip_targets is True
         assert sgtr_bench.num_samples == 50
 
         mmlu_bench = next(b for b in cfg.benchmark_evals if b.name == "mmlu_canary")
         assert mmlu_bench.type == "mmlu"
-        assert mmlu_bench.flip_targets is False
         assert mmlu_bench.num_samples == 20
 
     def test_load_with_system_prompt(self, tmp_path):
@@ -150,28 +147,19 @@ class TestLoadTrainingConfig:
             load_training_config(str(tmp_path / "nonexistent.yaml"))
 
 
-# ---------------------------------------------------------------------------
-# TrainingConfig defaults
-# ---------------------------------------------------------------------------
-
 class TestTrainingConfigDefaults:
     def test_defaults_are_sensible(self):
         cfg = TrainingConfig()
-        assert cfg.algorithm == "grpo"
+        assert cfg.algorithm == "sft"
+        assert cfg.model_name == "meta-llama/Llama-3.1-8B-Instruct"
         assert cfg.learning_rate == 5e-5
-        assert cfg.num_epochs == 3
+        assert cfg.num_epochs == 20
+        assert cfg.batch_size == 16
         assert cfg.seed == 42
         assert cfg.benchmark_evals == []
         assert cfg.wandb_project is None
-        assert cfg.prompt_field == "prompt"
-        assert cfg.target_field == "target"
-        assert cfg.id_field == "id"
         assert cfg.use_system_prompt is False
 
-
-# ---------------------------------------------------------------------------
-# YAML validation (unknown keys, type errors)
-# ---------------------------------------------------------------------------
 
 class TestConfigValidation:
     def test_unknown_top_level_key_raises(self, tmp_path):
@@ -186,7 +174,7 @@ class TestConfigValidation:
     def test_typo_in_hyperparameters_raises(self, tmp_path):
         config = {
             "experiment_name": "test",
-            "hyperparameters": {"lerning_rate": 1e-4},  # typo
+            "hyperparameters": {"lerning_rate": 1e-4},
         }
         path = tmp_path / "config.yaml"
         with open(path, "w") as f:
@@ -198,7 +186,7 @@ class TestConfigValidation:
     def test_typo_in_model_section_raises(self, tmp_path):
         config = {
             "experiment_name": "test",
-            "model": {"naem": "test-model"},  # typo
+            "model": {"naem": "test-model"},
         }
         path = tmp_path / "config.yaml"
         with open(path, "w") as f:
@@ -210,7 +198,7 @@ class TestConfigValidation:
     def test_typo_in_data_section_raises(self, tmp_path):
         config = {
             "experiment_name": "test",
-            "data": {"trian_file": "train.jsonl"},  # typo
+            "data": {"trian_file": "train.jsonl"},
         }
         path = tmp_path / "config.yaml"
         with open(path, "w") as f:

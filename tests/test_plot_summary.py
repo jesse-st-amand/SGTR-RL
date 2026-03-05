@@ -8,9 +8,7 @@ import yaml
 
 from sgtr_rl.plotting import _build_title, _smooth, generate_summary_plot
 
-# ---------------------------------------------------------------------------
 # _build_title
-# ---------------------------------------------------------------------------
 
 class TestBuildTitle:
     def test_build_title_default_params(self):
@@ -20,7 +18,7 @@ class TestBuildTitle:
             "model": {"name": "Qwen/Qwen2-1.5B"},
             "hyperparameters": {
                 "learning_rate": 5e-5,
-                "per_device_train_batch_size": 16,
+                "batch_size": 16,
             },
             "data": {"dataset": "pw"},
         }
@@ -52,9 +50,7 @@ class TestBuildTitle:
         assert "Exp 14" in title
 
 
-# ---------------------------------------------------------------------------
 # _smooth
-# ---------------------------------------------------------------------------
 
 class TestSmooth:
     def test_smooth_basic(self):
@@ -77,9 +73,7 @@ class TestSmooth:
         assert len(result) == len(values)
 
 
-# ---------------------------------------------------------------------------
 # generate_summary_plot
-# ---------------------------------------------------------------------------
 
 class TestGenerateSummaryPlot:
     def test_generate_summary_plot_creates_png(self, tmp_path):

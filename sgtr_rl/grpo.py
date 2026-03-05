@@ -4,12 +4,11 @@ import logging
 import time
 
 from sgtr_rl.answer import extract_answer
-from sgtr_rl.benchmarks import run_benchmark_evals
 from sgtr_rl.config import TrainingConfig
 from sgtr_rl.data import build_conversation
-from sgtr_rl.eval import run_val_eval
 from sgtr_rl.reward import sgtr_binary_reward
 from sgtr_rl.tinker import TinkerContext
+from sgtr_rl.tinker_eval import run_benchmark_evals, run_val_eval
 
 logger = logging.getLogger(__name__)
 
@@ -56,27 +55,24 @@ def train_grpo(
     from tinker.types.tensor_data import TensorData
     from tinker_cookbook import renderers
 
-    cfg = config
-
-    # Log example prompt
     _log_example_prompt(prompts)
 
-    group_size = cfg.num_rollouts_per_prompt
-    batch_size = cfg.per_device_train_batch_size
+    group_size = config.num_rollouts_per_prompt
+    batch_size = config.batch_size
     n_batches = len(prompts) // batch_size
-    n_epochs = cfg.num_epochs
+    n_epochs = config.num_epochs
 
     sampling_params = types.SamplingParams(
-        max_tokens=cfg.max_completion_length,
+        max_tokens=config.max_completion_length,
         stop=ctx.renderer.get_stop_sequences(),
-        temperature=cfg.sampling_temperature,
+        temperature=config.sampling_temperature,
     )
 
     logger.info(
         f"Training: {n_epochs} epochs, {n_batches} batches/epoch, "
         f"batch_size={batch_size}, group_size={group_size}, "
         f"total_steps={n_batches * n_epochs}, "
-        f"temperature={cfg.sampling_temperature}"
+        f"temperature={config.sampling_temperature}"
     )
 
     global_step = 0
@@ -100,7 +96,7 @@ def train_grpo(
             futures = []
             model_inputs = []
             for item in batch:
-                convo = build_conversation(item, cfg.use_system_prompt)
+                convo = build_conversation(item, config.use_system_prompt)
                 model_input = ctx.renderer.build_generation_prompt(convo)
                 future = sampling_client.sample(
                     prompt=model_input,
@@ -280,15 +276,13 @@ def train_grpo(
 
         # Validation evaluation at each epoch boundary
         run_val_eval(
-            val_prompts, ctx.training_client, ctx.renderer, ctx.eval_params,
-            ctx.ml_logger, step=global_step, epoch=epoch + 1, run_dir=cfg.run_dir,
-            use_system_prompt=cfg.use_system_prompt,
+            val_prompts, ctx, step=global_step, epoch=epoch + 1,
+            run_dir=config.run_dir, use_system_prompt=config.use_system_prompt,
         )
         run_benchmark_evals(
-            cfg.benchmark_evals, ctx.training_client, ctx.renderer, ctx.eval_params,
-            ctx.ml_logger, step=global_step, epoch=epoch + 1,
-            total_epochs=n_epochs, run_dir=cfg.run_dir,
-            use_system_prompt=cfg.use_system_prompt,
+            config.benchmark_evals, ctx, step=global_step, epoch=epoch + 1,
+            total_epochs=n_epochs, run_dir=config.run_dir,
+            use_system_prompt=config.use_system_prompt,
         )
 
     return global_step
