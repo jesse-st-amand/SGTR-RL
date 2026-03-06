@@ -417,31 +417,65 @@ def _detect_evaluator(hf_paths: list[str]) -> str | None:
     return None
 
 
+def _find_control_opponent(opponent_groups: dict[str, dict[str, list[Path]]]) -> str | None:
+    """Find the control opponent key (e.g. 'll-3.1-8b-control') in IND groups."""
+    for opponent in opponent_groups:
+        if opponent.endswith("-control"):
+            return opponent
+    return None
+
+
 def _run_all_extractions(
     by_experiment: dict[str, dict[str, dict[str, list[Path]]]],
     name: str,
     extract_output: str | None,
     cot: bool,
+    output_base: Path = Path("data/training_data"),
 ):
-    """Run extraction for each experiment/opponent/dataset group."""
+    """Run extraction for each experiment/opponent/dataset group.
+
+    For IND format experiments, control data (self-model responses) is
+    automatically combined with each treatment opponent's data so the
+    resulting dataset contains both "mine" and "not mine" examples.
+    """
     for experiment, opponent_groups in sorted(by_experiment.items()):
         fmt = detect_format_from_experiment(experiment) or "unknown"
+
+        # For IND: find control group to merge with each treatment group
+        control_opponent = _find_control_opponent(opponent_groups) if fmt == "ind" else None
+        control_datasets = opponent_groups.get(control_opponent, {}) if control_opponent else {}
+
         for opponent, dataset_groups in sorted(opponent_groups.items()):
+            # Skip standalone control extraction — it gets merged into treatments
+            if opponent == control_opponent:
+                continue
+
             for dataset, dirs in sorted(dataset_groups.items()):
-                logger.info(
-                    "%s / %s / %s: %d evals",
-                    experiment, opponent, dataset, len(dirs),
-                )
+                # For IND: merge control dirs for this dataset
+                all_dirs = list(dirs)
+                if control_datasets and dataset in control_datasets:
+                    all_dirs.extend(control_datasets[dataset])
+                    logger.info(
+                        "%s / %s / %s: %d treatment + %d control evals",
+                        experiment, opponent, dataset,
+                        len(dirs), len(control_datasets[dataset]),
+                    )
+                else:
+                    logger.info(
+                        "%s / %s / %s: %d evals",
+                        experiment, opponent, dataset, len(all_dirs),
+                    )
+
                 cot_suffix = "_cot" if cot else ""
                 if extract_output:
                     extract_dir = Path(extract_output)
                 else:
                     extract_dir = (
-                        Path("data/training_data")
+                        output_base
                         / f"{name}_{experiment}_vs_{opponent}_{dataset}{cot_suffix}"
                     )
                 run_extraction(
-                    dirs, fmt, extract_dir, cot=cot,
+                    all_dirs, fmt, extract_dir, cot=cot,
                     evaluator=name, experiment=experiment,
                     opponent=opponent, dataset=dataset,
                 )
