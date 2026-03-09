@@ -26,12 +26,14 @@ SGTR-RL/
 │   ├── metrics.py                # Metric logging and prediction saving
 │   ├── runs.py                   # Run directory creation
 │   ├── logging_setup.py          # Dual logging setup
-│   └── plotting.py               # Summary plot generation
+│   └── __init__.py               # Package marker
 ├── scripts/                      # Top-level CLI entry points
 │   ├── train.py                  # Main training entry point
 │   ├── prepare_data.py           # Download + extract training data
 │   ├── prepare_mmlu.py           # Prepare MMLU benchmark data
-│   └── plot_cross_evals.py       # Cross-eval analysis plots
+│   ├── plot_cross_evals.py       # Cross-eval analysis plots
+│   ├── plotting_utils.py         # Shared plotting helpers
+│   └── plot_summary.py           # Per-run summary charts for SFT results
 ├── experiments/                  # Experiment configs (one YAML per experiment)
 ├── data/                         # Data directory (gitignored, see below)
 ├── results/                      # Training run outputs (gitignored)
@@ -49,7 +51,7 @@ SGTR-RL/
 | `answer.py` | `extract_answer()` — extracts "1" or "2" from model output text. Handles both bare digits and "Answer: N" patterns. |
 | `reward.py` | `sgtr_binary_reward()` — extracts answer from model output, returns 1.0 if correct, 0.0 otherwise. |
 | `tinker.py` | `TinkerContext` dataclass (shared Tinker state) + `setup_tinker()` (creates ServiceClient, training client, tokenizer, renderer, params) + `save_checkpoint()`. |
-| `pipeline.py` | `run_training()` — full pipeline orchestration: load data → validate → setup tinker → baseline eval → train → checkpoint → plot → close. |
+| `pipeline.py` | `run_training()` — full pipeline orchestration: load data → validate → setup tinker → baseline eval → train → checkpoint → close. |
 | `sft.py` | `train_sft(config, ctx, prompts, val_prompts)` — SFT training loop. Cross-entropy loss on (prompt, target) pairs with assistant-token masking. |
 | `grpo.py` | `train_grpo(config, ctx, prompts, val_prompts)` — GRPO training loop: sample rollouts, compute rewards, center advantages within groups, build Tinker datums, call `forward_backward` + `optim_step`. |
 | `data.py` | `load_jsonl()`, `validate_training_data()`, `build_conversation()` — data loading, integrity validation, and conversation construction. |
@@ -57,7 +59,6 @@ SGTR-RL/
 | `benchmarks.py` | Pure benchmark logic (no Tinker deps). `format_mmlu_prompt()`, `extract_mmlu_answer()`, `should_run_benchmark()`, `_subsample()`, `load_benchmark_data()`. |
 | `metrics.py` | Metric logging and prediction saving. `log_val_result()`, `log_val_metrics()`, `save_val_predictions()`. |
 | `runs.py` | Creates structured run directories under `results/`. Handles run naming, config freezing, and existing-run policies. |
-| `plotting.py` | `generate_summary_plot()` — 3-subplot summary figure (loss, accuracy, benchmarks) from `metrics/metrics.jsonl`. |
 | `logging_setup.py` | Dual logging to terminal + file. |
 
 ## Scripts (`scripts/`)
@@ -68,6 +69,8 @@ SGTR-RL/
 | `prepare_data.py` | Download from HuggingFace + extract training data | `python -m scripts.prepare_data --evaluator ll-3.1-8b` |
 | `prepare_mmlu.py` | Download MMLU and prepare benchmark JSONL | `python -m scripts.prepare_mmlu` |
 | `plot_cross_evals.py` | Plot cross-eval results across experiments | `python -m scripts.plot_cross_evals` |
+| `plotting_utils.py` | Shared helpers for training summary plots | Imported by `scripts.train` |
+| `plot_summary.py` | Plot per-run SFT summaries for selected experiment outputs | `python -m scripts.plot_summary` |
 
 ## Training Data Format (Flat Schema)
 
@@ -186,6 +189,7 @@ python -m scripts.prepare_mmlu
 
 ```bash
 python -m scripts.plot_cross_evals
+python -m scripts.plot_summary
 ```
 
 ## Development

@@ -6,7 +6,6 @@ from pathlib import Path
 from sgtr_rl.config import TrainingConfig
 from sgtr_rl.data import load_jsonl, validate_training_data
 from sgtr_rl.grpo import train_grpo
-from sgtr_rl.plotting import generate_summary_plot
 from sgtr_rl.sft import train_sft
 from sgtr_rl.tinker import save_checkpoint, setup_tinker
 from sgtr_rl.tinker_eval import run_benchmark_evals, run_val_eval
@@ -43,7 +42,7 @@ def _load_val_prompts(config: TrainingConfig) -> list[dict]:
 
 
 def run_training(config: TrainingConfig) -> None:
-    """Full training pipeline: setup -> validate -> baseline -> train -> checkpoint -> plot."""
+    """Full training pipeline: setup -> validate -> baseline -> train -> checkpoint."""
     prompts = _load_prompts(config)
     val_prompts = _load_val_prompts(config)
     summary = validate_training_data(prompts, val_prompts)
@@ -71,11 +70,6 @@ def run_training(config: TrainingConfig) -> None:
     global_step = train_fn(config, ctx, prompts, val_prompts)
 
     save_checkpoint(ctx, config, global_step)
-
-    try:
-        generate_summary_plot(config.run_dir)
-    except Exception:
-        logger.warning("Failed to generate summary plot", exc_info=True)
 
     ctx.ml_logger.close()
     logger.info(f"Training complete. {global_step} steps.")

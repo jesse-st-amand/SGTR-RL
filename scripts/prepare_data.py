@@ -28,9 +28,14 @@ import argparse
 import json
 import logging
 import random
+import shutil
+import tempfile
+import time
 import zipfile
 from collections import defaultdict
 from pathlib import Path
+
+from huggingface_hub import hf_hub_download
 
 from sgtr_rl.logging_setup import setup_logging
 
@@ -568,10 +573,6 @@ def main():
 
     # Download + unzip (preserving HF structure as directories)
     if not args.extract_only:
-        from huggingface_hub import hf_hub_download
-        import shutil
-        import tempfile
-
         to_download = [
             f for f in matched if not hf_path_to_local_dir(f).exists()
         ]
@@ -593,7 +594,6 @@ def main():
                     break
                 except Exception as e:
                     if attempt < 2:
-                        import time
                         wait = 2 ** attempt
                         logger.warning(
                             "Retry %d/2 for %s (waiting %ds): %s",

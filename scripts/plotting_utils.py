@@ -49,6 +49,30 @@ _DEFAULTS = {
 }
 
 
+def _infer_format_label(config: dict) -> str:
+    """Infer whether the run used pairwise or individual SGTR data."""
+    data_cfg = config.get("data", {})
+
+    explicit_format = str(data_cfg.get("format", "")).lower()
+    if explicit_format in {"pw", "pairwise"}:
+        return "pairwise"
+    if explicit_format in {"ind", "individual"}:
+        return "individual"
+
+    exp_name = str(config.get("experiment_name", "")).lower()
+    match = re.search(r"(?:^|_)(pw|ind)(?:_|$)", exp_name)
+    if match:
+        return {"pw": "pairwise", "ind": "individual"}[match.group(1)]
+
+    train_file = str(data_cfg.get("train_file", "")).upper()
+    if "_PW" in train_file:
+        return "pairwise"
+    if "_IND" in train_file:
+        return "individual"
+
+    return "unknown format"
+
+
 def _build_title(config: dict) -> str:
     """Build a descriptive title from the frozen config.yaml."""
     exp_name = config.get("experiment_name", "")
@@ -80,7 +104,11 @@ def _build_title(config: dict) -> str:
         param_parts.append(f"bs={bs}")
 
     dataset = data_cfg.get("dataset", "").capitalize() or "?"
-    base = f"Exp {exp_num}: {model_short} (self) vs {gen_short}, {dataset}, pairwise, {algorithm}"
+    format_label = _infer_format_label(config)
+    base = (
+        f"Exp {exp_num}: {model_short} (self) vs {gen_short}, "
+        f"{dataset}, {format_label}, {algorithm}"
+    )
     if param_parts:
         base += ", " + ", ".join(param_parts)
     return base

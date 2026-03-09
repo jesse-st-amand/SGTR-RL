@@ -55,16 +55,18 @@ SGTR-RL/
 │   ├── answer.py                  # extract_answer (1/2 extraction)
 │   ├── reward.py                  # Binary reward function
 │   ├── data.py                    # Data loading + validation
-│   ├── eval.py                    # Val evaluation (accuracy, NLL)
-│   ├── benchmarks.py              # MMLU + SGTR cross-eval
+│   ├── tinker_eval.py             # Val + benchmark evaluation on Tinker
+│   ├── benchmarks.py              # Pure benchmark formatting/scheduling logic
+│   ├── metrics.py                 # Metric logging + prediction saving
 │   ├── runs.py                    # Run directory management
-│   ├── plotting.py                # Summary plot generation
 │   └── logging_setup.py           # Dual logging (terminal + file)
 ├── scripts/                       # CLI entry points
 │   ├── train.py                   # Main training entry point
 │   ├── prepare_data.py            # Download + extract training data
 │   ├── prepare_mmlu.py            # Prepare MMLU benchmark data
-│   └── plot_cross_evals.py        # Cross-eval analysis plots
+│   ├── plot_cross_evals.py        # Cross-eval analysis plots
+│   ├── plotting_utils.py          # Shared plotting helpers
+│   └── plot_summary.py            # Per-run summary charts for SFT results
 ├── experiments/                   # One YAML config per experiment (14-22)
 ├── data/                          # Training data (gitignored)
 ├── results/                       # Run outputs: logs, metrics, predictions (gitignored)

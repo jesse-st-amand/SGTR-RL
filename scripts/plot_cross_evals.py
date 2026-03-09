@@ -254,7 +254,9 @@ def plot_model_heatmap(experiments: dict, output_dir: Path):
     eval_labels = [_BENCH_DISPLAY.get(e, e) for e in eval_names]
 
     # Plot 1: Final accuracy heatmap
-    fig, ax = plt.subplots(figsize=(max(8, len(eval_labels) * 1.2), max(4, len(model_labels) * 0.8)))
+    fig, ax = plt.subplots(
+        figsize=(max(8, len(eval_labels) * 1.2), max(4, len(model_labels) * 0.8))
+    )
     im = ax.imshow(final_matrix, cmap="RdYlGn", vmin=0.3, vmax=1.0, aspect="auto")
 
     ax.set_xticks(range(len(eval_labels)))
@@ -282,7 +284,9 @@ def plot_model_heatmap(experiments: dict, output_dir: Path):
     logger.info("Saved heatmap_final_accuracy.png")
 
     # Plot 2: Improvement heatmap
-    fig, ax = plt.subplots(figsize=(max(8, len(eval_labels) * 1.2), max(4, len(model_labels) * 0.8)))
+    fig, ax = plt.subplots(
+        figsize=(max(8, len(eval_labels) * 1.2), max(4, len(model_labels) * 0.8))
+    )
     max_imp = np.nanmax(np.abs(improvement_matrix))
     im = ax.imshow(improvement_matrix, cmap="RdBu", vmin=-max_imp, vmax=max_imp, aspect="auto")
 
@@ -299,7 +303,10 @@ def plot_model_heatmap(experiments: dict, output_dir: Path):
                 ax.text(j, i, f"{sign}{val:.0%}", ha="center", va="center",
                         fontsize=10, fontweight="bold")
 
-    ax.set_title("Improvement from Training (final - baseline)\n(PW Rec, by training 'other' model)")
+    ax.set_title(
+        "Improvement from Training (final - baseline)\n"
+        "(PW Rec, by training 'other' model)"
+    )
     ax.set_xlabel("Cross-Eval Benchmark")
     ax.set_ylabel("Trained against")
     fig.colorbar(im, ax=ax, label="Accuracy change", shrink=0.8)
@@ -390,9 +397,14 @@ def plot_combined_overview(experiments: dict, output_dir: Path):
     fig, axes = plt.subplots(nrows, ncols, figsize=(14, nrows * 5), sharey=True)
     axes = axes.flatten()
 
-    sorted_exps = sorted(pw_exps.items(), key=lambda x: _MODEL_DISPLAY.get(x[1][1]["other_model"], ""))
-    model_labels = [_MODEL_DISPLAY.get(info["other_model"], info["other_model"])
-                    for _, (_, info) in sorted_exps]
+    sorted_exps = sorted(
+        pw_exps.items(),
+        key=lambda item: _MODEL_DISPLAY.get(item[1][1]["other_model"], ""),
+    )
+    model_labels = [
+        _MODEL_DISPLAY.get(info["other_model"], info["other_model"])
+        for _, (_, info) in sorted_exps
+    ]
 
     for j, eval_name in enumerate(eval_names):
         ax = axes[j]
@@ -432,7 +444,11 @@ def plot_combined_overview(experiments: dict, output_dir: Path):
 
         ax.set_xticks(x)
         ax.set_xticklabels(model_labels, rotation=35, ha="right", fontsize=13)
-        ax.set_title(_BENCH_DISPLAY.get(eval_name, eval_name), fontsize=15, fontweight="bold")
+        ax.set_title(
+            _BENCH_DISPLAY.get(eval_name, eval_name),
+            fontsize=15,
+            fontweight="bold",
+        )
         if j % ncols == 0:
             ax.set_ylabel("Accuracy", fontsize=13)
         ax.set_yticks(np.arange(0, 1.1, 0.1))
@@ -452,8 +468,13 @@ def plot_combined_overview(experiments: dict, output_dir: Path):
     ]
     axes[1].legend(handles=legend_elements, loc="upper left", fontsize=12)
 
-    fig.suptitle("Eval Generalisation: Llama-3.1-8B on ShareGPT (PW Rec)\nx-axis indicates 'other' model trained against",
-                 fontsize=18, fontweight="bold", y=1.01)
+    fig.suptitle(
+        "Eval Generalisation: Llama-3.1-8B on ShareGPT (PW Rec)\n"
+        "x-axis indicates 'other' model trained against",
+        fontsize=18,
+        fontweight="bold",
+        y=1.01,
+    )
 
     plt.tight_layout()
     fig.savefig(output_dir / "overview_by_model.png", dpi=150, bbox_inches="tight")
@@ -645,7 +666,6 @@ def plot_mmlu_summary(experiments: dict, output_dir: Path):
         (axes[0], baselines_20, finals_20, "MMLU-20"),
         (axes[1], baselines_500, finals_500, "MMLU-500"),
     ]:
-        x = np.arange(len(names))
         width = 0.35
         valid = [i for i in range(len(baselines)) if not np.isnan(baselines[i])]
         if not valid:
@@ -689,9 +709,21 @@ def plot_mmlu_summary(experiments: dict, output_dir: Path):
 
 def main():
     parser = argparse.ArgumentParser(description="Plot cross-evaluation results")
-    parser.add_argument("--results-dir", default="results", help="Directory containing experiment results")
-    parser.add_argument("--output-dir", default=None, help="Directory for output plots (default: results/batch_<exp_nums>/plots)")
-    parser.add_argument("--experiments", nargs="*", help="Filter to specific experiment numbers (e.g. 15 16)")
+    parser.add_argument(
+        "--results-dir",
+        default="results",
+        help="Directory containing experiment results",
+    )
+    parser.add_argument(
+        "--output-dir",
+        default=None,
+        help="Directory for output plots (default: results/batch_<exp_nums>/plots)",
+    )
+    parser.add_argument(
+        "--experiments",
+        nargs="*",
+        help="Filter to specific experiment numbers (e.g. 15 16)",
+    )
     args = parser.parse_args()
 
     setup_logging("plot_cross_evals")

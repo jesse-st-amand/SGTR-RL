@@ -1,4 +1,4 @@
-"""Tests for sgtr_rl.plotting."""
+"""Tests for scripts.plotting_utils."""
 
 import json
 
@@ -6,7 +6,7 @@ import numpy as np
 import pytest
 import yaml
 
-from sgtr_rl.plotting import _build_title, _smooth, generate_summary_plot
+from scripts.plotting_utils import _build_title, _smooth, generate_summary_plot
 
 # _build_title
 
@@ -25,6 +25,7 @@ class TestBuildTitle:
         title = _build_title(config)
         assert "Exp 14" in title
         assert "SFT" in title
+        assert "pairwise" in title
         # No non-default params → no lr= in title
         assert "lr=" not in title
 
@@ -48,6 +49,17 @@ class TestBuildTitle:
         }
         title = _build_title(config)
         assert "Exp 14" in title
+
+    def test_build_title_individual_format(self):
+        config = {
+            "experiment_name": "02_sft_ind_vs_qwen",
+            "algorithm": "sft",
+            "model": {"name": "Qwen/Qwen2-1.5B"},
+            "data": {"dataset": "sharegpt"},
+        }
+        title = _build_title(config)
+        assert "individual" in title
+        assert "pairwise" not in title
 
 
 # _smooth

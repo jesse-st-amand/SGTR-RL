@@ -1,6 +1,6 @@
 """High-level loop structure tests for SFT and GRPO training functions.
 
-Mocks at a higher level (run_val_eval, run_benchmark_evals, generate_summary_plot)
+Mocks at a higher level (run_val_eval and run_benchmark_evals)
 to test loop structure independently of eval implementation.
 """
 
@@ -82,7 +82,6 @@ class TestSFTDataValidation:
                  patch("sgtr_rl.pipeline.run_val_eval"), \
                  patch("sgtr_rl.pipeline.run_benchmark_evals"), \
                  patch("sgtr_rl.pipeline.save_checkpoint"), \
-                 patch("sgtr_rl.pipeline.generate_summary_plot"), \
                  patch("sgtr_rl.sft.run_val_eval"), \
                  patch("sgtr_rl.sft.run_benchmark_evals"):
                 from sgtr_rl.pipeline import run_training

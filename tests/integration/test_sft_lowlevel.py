@@ -36,7 +36,6 @@ class TestSFTBaseline:
                  patch("sgtr_rl.pipeline.run_val_eval") as mock_pipeline_val, \
                  patch("sgtr_rl.pipeline.run_benchmark_evals") as mock_pipeline_bench, \
                  patch("sgtr_rl.pipeline.save_checkpoint"), \
-                 patch("sgtr_rl.pipeline.generate_summary_plot"), \
                  patch("sgtr_rl.sft.run_val_eval"), \
                  patch("sgtr_rl.sft.run_benchmark_evals"):
                 from sgtr_rl.pipeline import run_training

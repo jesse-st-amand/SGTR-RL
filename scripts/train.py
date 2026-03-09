@@ -12,6 +12,7 @@ import logging
 
 from dotenv import load_dotenv
 
+from scripts.plotting_utils import generate_summary_plot
 from sgtr_rl.config import load_training_config
 from sgtr_rl.logging_setup import setup_logging
 from sgtr_rl.pipeline import run_training
@@ -71,6 +72,11 @@ def main():
     )
 
     run_training(config)
+
+    try:
+        generate_summary_plot(config.run_dir)
+    except Exception:
+        logger.warning("Failed to generate summary plot", exc_info=True)
 
 
 if __name__ == "__main__":
