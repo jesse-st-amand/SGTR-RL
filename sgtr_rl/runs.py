@@ -83,6 +83,7 @@ def create_run_dir(
     yaml_path: str | Path,
     group: str | None = None,
     exists: str = "error",
+    base_dir: str | Path | None = None,
 ) -> Path:
     """Create a unified run directory for a training run.
 
@@ -100,7 +101,9 @@ def create_run_dir(
     overrides_str = compute_overrides(config, yaml_path)
     run_name = make_run_name(config.experiment_name, overrides_str, timestamp)
 
-    base = BASE_DIR / group if group else BASE_DIR
+    base = Path(base_dir) if base_dir is not None else BASE_DIR
+    if group:
+        base = base / group
     run_dir = base / run_name
 
     if exists != "new":

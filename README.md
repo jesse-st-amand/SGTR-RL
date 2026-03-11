@@ -2,7 +2,10 @@
 
 **Training for Self-Generated Text Recognition**
 
-Train language models to recognize their own writing. The core task: given text, can a model tell whether it wrote it? Currently training Llama-3.1-8B-Instruct via **SFT** and **GRPO** (Group Relative Policy Optimization) with LoRA fine-tuning on [Tinker](https://tinker-docs.thinkingmachines.ai) (managed GPU platform).
+Train language models to recognize their own writing. The core task: given text, can a model tell whether it wrote it? The repo now supports two training paths:
+
+- **Tinker backend** for the existing managed-GPU workflow
+- **Local backend** for single-node HF/PEFT LoRA SFT on local GPUs or RunPod
 
 Training data comes from the [self-rec-framework](https://github.com/MARS-3-0-self-recognition/self-rec-framework) evaluation pipeline, which generates pairwise and individual SGTR prompts from model outputs.
 
@@ -12,7 +15,7 @@ Training data comes from the [self-rec-framework](https://github.com/MARS-3-0-se
 git clone https://github.com/jesse-st-amand/SGTR-RL.git
 cd SGTR-RL
 uv sync
-cp .env.template .env           # fill in TINKER_API_KEY, WANDB_API_KEY
+cp .env.template .env           # fill in backend/provider tokens as needed
 ```
 
 ## How It Works
@@ -23,17 +26,32 @@ cp .env.template .env           # fill in TINKER_API_KEY, WANDB_API_KEY
 python -m scripts.prepare_data --evaluator ll-3.1-8b
 ```
 
-**2. Train** — SFT or GRPO with LoRA on Tinker:
+**2. Train** — choose an experiment config and runtime:
 ```bash
+# Existing Tinker path:
 python -m scripts.train \
-    --config experiments/15_sft_pw_rec_vs_qwen/config.yaml
+    --config experiments/01_sft_pw_vs_qwen/config.yaml
+
+# Local GPU path:
+python -m scripts.train \
+    --config experiments/01_sft_pw_vs_qwen/config.yaml \
+    --runtime runtimes/local_gpu.yaml
 ```
 
-**3. Monitor** — metrics logged to [Weights & Biases](https://wandb.ai):
+**3. Launch on RunPod** — one-shot pod creation, training, wait, and teardown:
+```bash
+python -m scripts.runpod_launch \
+    --config experiments/01_sft_pw_vs_qwen/config.yaml \
+    --runtime runtimes/runpod_a100.yaml
+```
+
+**4. Monitor** — metrics logged to [Weights & Biases](https://wandb.ai) and written locally:
 - Val accuracy + NLL computed at each epoch boundary
 - Epoch 0 baseline (untrained model) for reference
 - MMLU and cross-domain SGTR benchmarks tracked throughout training
 - Per-sample predictions saved to `val_predictions/` and `benchmark_predictions/`
+- `status.json` updated as the run progresses
+- Final local checkpoints saved as PEFT adapter weights in `checkpoints/final/`
 
 ## Current Results
 
@@ -46,11 +64,15 @@ SFT experiments 15-22 training Llama-3.1-8B on pairwise and individual SGTR acro
 
 ```
 SGTR-RL/
-├── sgtr_rl/                       # Flat, training-focused package
-│   ├── config.py                  # TrainingConfig + YAML loader
-│   ├── pipeline.py                # run_training() orchestration
-│   ├── sft.py                     # train_sft() function
-│   ├── grpo.py                    # train_grpo() function
+├── sgtr_rl/                       # Training/runtime package
+│   ├── config.py                  # TrainingConfig + experiment YAML loader
+│   ├── runtime_config.py          # RuntimeConfig + runtime YAML loader
+│   ├── artifacts.py               # status.json + JSONL metric helpers
+│   ├── pipeline.py                # run_training() orchestration + backend dispatch
+│   ├── sft.py                     # Tinker SFT training loop
+│   ├── local_sft.py               # Local HF/PEFT SFT training loop + checkpoint save
+│   ├── local_eval.py              # Local validation + benchmark evaluation
+│   ├── grpo.py                    # Tinker GRPO training loop
 │   ├── tinker.py                  # TinkerContext + setup_tinker()
 │   ├── answer.py                  # extract_answer (1/2 extraction)
 │   ├── reward.py                  # Binary reward function
@@ -62,11 +84,16 @@ SGTR-RL/
 │   └── logging_setup.py           # Dual logging (terminal + file)
 ├── scripts/                       # CLI entry points
 │   ├── train.py                   # Main training entry point
+│   ├── runpod_launch.py           # Create/poll/delete one-shot RunPod jobs
+│   ├── runpod_utils.py            # RunPod request/startup-script helpers
 │   ├── prepare_data.py            # Download + extract training data
 │   ├── prepare_mmlu.py            # Prepare MMLU benchmark data
 │   ├── plot_cross_evals.py        # Cross-eval analysis plots
 │   ├── plotting_utils.py          # Shared plotting helpers
 │   └── plot_summary.py            # Per-run summary charts for SFT results
+├── runtimes/                      # Machine/provider runtime configs
+│   ├── local_gpu.yaml             # Example local single-node runtime
+│   └── runpod_a100.yaml           # Example RunPod runtime
 ├── experiments/                   # One YAML config per experiment (14-22)
 ├── data/                          # Training data (gitignored)
 ├── results/                       # Run outputs: logs, metrics, predictions (gitignored)
@@ -87,6 +114,7 @@ Targets are always `"1"` or `"2"`. For PW format, each ID has exactly 2 records 
 | Package | Purpose |
 |---------|---------|
 | [tinker](https://tinker-docs.thinkingmachines.ai) + [tinker-cookbook](https://github.com/thinking-machines-lab/tinker-cookbook) | Managed GPU training (LoRA, sampling, checkpoints, logging) |
+| [transformers](https://huggingface.co/docs/transformers/index) + [peft](https://huggingface.co/docs/peft/index) | Local single-node LoRA training/eval |
 | [self-rec-framework](https://github.com/MARS-3-0-self-recognition/self-rec-framework) | SGTR experiment configs, prompts, evaluation tasks |
 | [inspect-ai](https://inspect.aisi.org.uk/) | LLM evaluation framework (.eval file format) |
 | [wandb](https://wandb.ai) | Experiment tracking and metric visualization |
@@ -100,8 +128,19 @@ Copy `.env.template` to `.env` and fill in:
 | Variable | Required | Purpose |
 |----------|----------|---------|
 | `TINKER_API_KEY` | For Tinker backend | Managed GPU training |
+| `RUNPOD_API_KEY` | For RunPod launcher | Pod create/poll/delete |
+| `HF_TOKEN` | For local/RunPod gated models | Model download/auth |
 | `WANDB_API_KEY` | For W&B logging | Experiment tracking |
 | `TOGETHER_API_KEY` | For Together eval backend | Model inference for evaluation |
+
+## Runtime Configs
+
+Experiment YAMLs in `experiments/` stay focused on model/data/algorithm choices. Machine-specific settings live in `runtimes/`.
+
+- `runtimes/local_gpu.yaml`: local single-node HF/PEFT SFT
+- `runtimes/runpod_a100.yaml`: example RunPod config with a mounted network volume
+
+For local/RunPod v1, only **SFT** is supported on the local backend. GRPO remains Tinker-only.
 
 ## Documentation
 

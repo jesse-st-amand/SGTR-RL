@@ -3,9 +3,12 @@
 import logging
 from pathlib import Path
 
+from sgtr_rl.artifacts import update_run_status
 from sgtr_rl.config import TrainingConfig
 from sgtr_rl.data import load_jsonl, validate_training_data
 from sgtr_rl.grpo import train_grpo
+from sgtr_rl.local_sft import train_local_sft
+from sgtr_rl.runtime_config import RuntimeConfig
 from sgtr_rl.sft import train_sft
 from sgtr_rl.tinker import save_checkpoint, setup_tinker
 from sgtr_rl.tinker_eval import run_benchmark_evals, run_val_eval
@@ -26,9 +29,7 @@ def _load_prompts(config: TrainingConfig) -> list[dict]:
         display = prompt[:500] + "\n  [...truncated...]\n" + prompt[-200:]
     else:
         display = prompt
-    logger.info(
-        f"Example training prompt (target={example['target']}):\n  {display}"
-    )
+    logger.info(f"Example training prompt (target={example['target']}):\n  {display}")
     return prompts
 
 
@@ -41,8 +42,45 @@ def _load_val_prompts(config: TrainingConfig) -> list[dict]:
     return prompts
 
 
-def run_training(config: TrainingConfig) -> None:
-    """Full training pipeline: setup -> validate -> baseline -> train -> checkpoint."""
+def _run_tinker_training(
+    config: TrainingConfig,
+    prompts: list[dict],
+    val_prompts: list[dict],
+) -> int:
+    """Original Tinker-backed training flow."""
+    ctx = setup_tinker(config)
+
+    logger.info("Running epoch 0 baseline evaluation (untrained model)...")
+    run_val_eval(
+        val_prompts,
+        ctx,
+        step=0,
+        epoch=0,
+        run_dir=config.run_dir,
+        use_system_prompt=config.use_system_prompt,
+    )
+    run_benchmark_evals(
+        config.benchmark_evals,
+        ctx,
+        step=0,
+        epoch=0,
+        total_epochs=config.num_epochs,
+        run_dir=config.run_dir,
+        use_system_prompt=config.use_system_prompt,
+    )
+
+    train_fns = {"sft": train_sft, "grpo": train_grpo}
+    train_fn = train_fns[config.algorithm]
+    global_step = train_fn(config, ctx, prompts, val_prompts)
+
+    save_checkpoint(ctx, config, global_step)
+    ctx.ml_logger.close()
+    return global_step
+
+
+def run_training(config: TrainingConfig, runtime: RuntimeConfig | None = None) -> None:
+    """Full training pipeline for the selected runtime/backend."""
+    runtime = runtime or RuntimeConfig()
     prompts = _load_prompts(config)
     val_prompts = _load_val_prompts(config)
     summary = validate_training_data(prompts, val_prompts)
@@ -52,24 +90,39 @@ def run_training(config: TrainingConfig) -> None:
         f"{summary['val_ids']} val IDs, format={summary['format']}"
     )
 
-    ctx = setup_tinker(config)
-
-    logger.info("Running epoch 0 baseline evaluation (untrained model)...")
-    run_val_eval(
-        val_prompts, ctx, step=0, epoch=0,
-        run_dir=config.run_dir, use_system_prompt=config.use_system_prompt,
-    )
-    run_benchmark_evals(
-        config.benchmark_evals, ctx, step=0, epoch=0,
-        total_epochs=config.num_epochs,
-        run_dir=config.run_dir, use_system_prompt=config.use_system_prompt,
+    update_run_status(
+        config.run_dir,
+        "starting",
+        backend=runtime.backend,
+        algorithm=config.algorithm,
+        extra={"experiment_name": config.experiment_name},
     )
 
-    train_fns = {"sft": train_sft, "grpo": train_grpo}
-    train_fn = train_fns[config.algorithm]
-    global_step = train_fn(config, ctx, prompts, val_prompts)
+    try:
+        if runtime.backend == "tinker":
+            global_step = _run_tinker_training(config, prompts, val_prompts)
+        elif runtime.backend == "local":
+            if config.algorithm != "sft":
+                raise NotImplementedError("Local backend currently supports SFT only")
+            global_step = train_local_sft(config, runtime, prompts, val_prompts)
+        else:
+            raise ValueError(f"Unsupported backend: {runtime.backend}")
+    except Exception as exc:
+        update_run_status(
+            config.run_dir,
+            "failed",
+            backend=runtime.backend,
+            algorithm=config.algorithm,
+            error=str(exc),
+        )
+        raise
 
-    save_checkpoint(ctx, config, global_step)
-
-    ctx.ml_logger.close()
+    update_run_status(
+        config.run_dir,
+        "completed",
+        backend=runtime.backend,
+        algorithm=config.algorithm,
+        step=global_step,
+        epoch=config.num_epochs,
+    )
     logger.info(f"Training complete. {global_step} steps.")
