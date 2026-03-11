@@ -6,33 +6,27 @@ import pytest
 import yaml
 
 
-# ---------------------------------------------------------------------------
-# Record builders
-# ---------------------------------------------------------------------------
-
-def _pw_record(uuid: str, target: str, **meta) -> dict:
-    """Build a minimal PW-format record dict."""
-    metadata = {"uuid": uuid, "format": "pw", **meta}
+def _pw_record(id: str, target: str, **extra) -> dict:
+    """Build a minimal PW-format record dict (flat schema)."""
     return {
-        "prompt": f"Which response did you write? (uuid={uuid})",
+        "prompt": f"Which response did you write? (id={id})",
         "target": target,
-        "metadata": metadata,
+        "id": id,
+        "format": "pw",
+        **extra,
     }
 
 
-def _ind_record(uuid: str, target: str, **meta) -> dict:
-    """Build a minimal IND-format record dict."""
-    metadata = {"uuid": uuid, "format": "ind", **meta}
+def _ind_record(id: str, target: str, **extra) -> dict:
+    """Build a minimal IND-format record dict (flat schema)."""
     return {
-        "prompt": f"Did you write this response? (uuid={uuid})",
+        "prompt": f"Did you write this response? (id={id})",
         "target": target,
-        "metadata": metadata,
+        "id": id,
+        "format": "ind",
+        **extra,
     }
 
-
-# ---------------------------------------------------------------------------
-# JSONL helper
-# ---------------------------------------------------------------------------
 
 def write_jsonl(path, records: list[dict]) -> None:
     """Write a list of dicts to a JSONL file."""
@@ -41,13 +35,9 @@ def write_jsonl(path, records: list[dict]) -> None:
             f.write(json.dumps(rec) + "\n")
 
 
-# ---------------------------------------------------------------------------
-# Fixtures
-# ---------------------------------------------------------------------------
-
 @pytest.fixture()
 def pw_train_val_files(tmp_path):
-    """Create valid PW train/val JSONL pair (no UUID overlap, 2 records per UUID)."""
+    """Create valid PW train/val JSONL pair (no ID overlap, 2 records per ID)."""
     train_records = [
         _pw_record("train-uuid-1", "1"),
         _pw_record("train-uuid-1", "2"),
@@ -73,26 +63,19 @@ def sample_config_yaml(tmp_path):
     config = {
         "experiment_name": "14_sft_pw_test",
         "algorithm": "sft",
-        "backend": "tinker",
         "model": {
-            "name": "Qwen/Qwen2-1.5B",
+            "name": "meta-llama/Llama-3.1-8B-Instruct",
             "lora_rank": 32,
-            "lora_alpha": 64,
-            "lora_dropout": 0.05,
         },
         "hyperparameters": {
             "learning_rate": 5e-5,
             "num_epochs": 3,
-            "per_device_train_batch_size": 4,
+            "batch_size": 4,
             "seed": 42,
         },
         "data": {
             "train_file": "data/training_data/sharegpt_pw/train.jsonl",
             "val_file": "data/training_data/sharegpt_pw/val.jsonl",
-        },
-        "checkpointing": {
-            "save_steps": 50,
-            "eval_steps": 50,
         },
     }
     path = tmp_path / "config.yaml"

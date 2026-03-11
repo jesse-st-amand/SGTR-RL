@@ -1,22 +1,19 @@
-"""Tests for sgtr_rl.training.run_dir."""
+"""Tests for sgtr_rl.runs."""
 
 from unittest.mock import patch
 
 import pytest
 import yaml
 
-from sgtr_rl.training.run_dir import (
+from sgtr_rl.config import TrainingConfig
+from sgtr_rl.runs import (
     _find_existing_run,
     compute_overrides,
     create_run_dir,
     make_run_name,
 )
-from sgtr_rl.training.train_config import TrainingConfig
 
-
-# ---------------------------------------------------------------------------
 # make_run_name
-# ---------------------------------------------------------------------------
 
 class TestMakeRunName:
     def test_make_run_name_with_overrides(self):
@@ -28,9 +25,7 @@ class TestMakeRunName:
         assert name == "14_sft_pw__20250101_120000"
 
 
-# ---------------------------------------------------------------------------
 # compute_overrides
-# ---------------------------------------------------------------------------
 
 class TestComputeOverrides:
     def test_compute_overrides_detects_changes(self, tmp_path):
@@ -65,9 +60,7 @@ class TestComputeOverrides:
         assert result == ""
 
 
-# ---------------------------------------------------------------------------
 # create_run_dir
-# ---------------------------------------------------------------------------
 
 class TestCreateRunDir:
     def test_create_run_dir_structure(self, tmp_path, sample_config_yaml):
@@ -78,7 +71,7 @@ class TestCreateRunDir:
         # Create a dummy train file so the parent dir exists
         (tmp_path / "train.jsonl").write_text("")
 
-        with patch("sgtr_rl.training.run_dir.BASE_DIR", tmp_path / "results"):
+        with patch("sgtr_rl.runs.BASE_DIR", tmp_path / "results"):
             run_dir = create_run_dir(config, sample_config_yaml, exists="new")
 
         assert run_dir.exists()
@@ -92,7 +85,7 @@ class TestCreateRunDir:
         )
         (tmp_path / "train.jsonl").write_text("")
 
-        with patch("sgtr_rl.training.run_dir.BASE_DIR", tmp_path / "results"):
+        with patch("sgtr_rl.runs.BASE_DIR", tmp_path / "results"):
             run_dir = create_run_dir(config, sample_config_yaml, exists="new")
 
         assert not (run_dir / "eval").exists()
@@ -105,7 +98,7 @@ class TestCreateRunDir:
         )
         (tmp_path / "train.jsonl").write_text("")
 
-        with patch("sgtr_rl.training.run_dir.BASE_DIR", tmp_path / "results"):
+        with patch("sgtr_rl.runs.BASE_DIR", tmp_path / "results"):
             create_run_dir(config, sample_config_yaml, exists="new")
             with pytest.raises(FileExistsError):
                 create_run_dir(config, sample_config_yaml, exists="error")
@@ -117,15 +110,13 @@ class TestCreateRunDir:
         )
         (tmp_path / "train.jsonl").write_text("")
 
-        with patch("sgtr_rl.training.run_dir.BASE_DIR", tmp_path / "results"):
+        with patch("sgtr_rl.runs.BASE_DIR", tmp_path / "results"):
             first_dir = create_run_dir(config, sample_config_yaml, exists="new")
             second_dir = create_run_dir(config, sample_config_yaml, exists="skip")
             assert second_dir == first_dir
 
 
-# ---------------------------------------------------------------------------
 # _find_existing_run
-# ---------------------------------------------------------------------------
 
 class TestFindExistingRun:
     def test_find_existing_run(self, tmp_path):

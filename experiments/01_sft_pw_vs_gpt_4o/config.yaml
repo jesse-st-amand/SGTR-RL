@@ -1,0 +1,77 @@
+experiment_name: 01_sft_pw_vs_gpt_4o
+description: SFT on PW recognition vs gpt-4o (ShareGPT). Cross-evals across tag, format,
+  task, dataset, and experiment source.
+algorithm: sft
+wandb_project: sgtr-rl
+data:
+  generator_models:
+  - gpt-4o
+  dataset: sharegpt
+  train_file: data/training_data/ll-3.1-8b_ICML_01_UT_PW-Q_Rec_NPr_FA_Inst_vs_gpt-4o_sharegpt/train.jsonl
+  val_file: data/training_data/ll-3.1-8b_ICML_01_UT_PW-Q_Rec_NPr_FA_Inst_vs_gpt-4o_sharegpt/val.jsonl
+model:
+  name: meta-llama/Llama-3.1-8B-Instruct
+  lora_rank: 32
+hyperparameters:
+  learning_rate: 5.0e-05
+  num_epochs: 20
+  batch_size: 16
+  seed: 42
+benchmark_evals:
+  mmlu_20:
+    type: mmlu
+    data_file: data/benchmarks/mmlu.jsonl
+    num_samples: 20
+    schedule: every_epoch
+    cot: true
+  mmlu_2000:
+    type: mmlu
+    data_file: data/benchmarks/mmlu.jsonl
+    num_samples: 2000
+    schedule: end_only
+    cot: true
+  xeval_dataset_bigcodebench:
+    type: sgtr
+    data_file: data/training_data/ll-3.1-8b_ICML_01_UT_PW-Q_Rec_NPr_FA_Inst_vs_gpt-4o_bigcodebench/val.jsonl
+    schedule: every_5_epochs
+    frequency: 5
+  xeval_dataset_pku:
+    type: sgtr
+    data_file: data/training_data/ll-3.1-8b_ICML_01_UT_PW-Q_Rec_NPr_FA_Inst_vs_gpt-4o_pku_saferlhf/val.jsonl
+    schedule: every_5_epochs
+    frequency: 5
+  xeval_dataset_wikisum:
+    type: sgtr
+    data_file: data/training_data/ll-3.1-8b_ICML_01_UT_PW-Q_Rec_NPr_FA_Inst_vs_gpt-4o_wikisum/val.jsonl
+    schedule: every_5_epochs
+    frequency: 5
+  xeval_format_ind:
+    type: sgtr
+    data_file: data/training_data/ll-3.1-8b_ICML_02_UT_IND-Q_Rec_NPr_FA_Inst_vs_gpt-4o-treatment_sharegpt/val.jsonl
+    schedule: every_5_epochs
+    frequency: 5
+  xeval_task_pref_pw:
+    type: sgtr
+    data_file: data/training_data/ll-3.1-8b_ICML_05_UT_PW-Q_Pref-Q_NPr_FA_Inst_vs_gpt-4o_sharegpt/val.jsonl
+    schedule: every_5_epochs
+    frequency: 5
+  xeval_task_pref_ind:
+    type: sgtr
+    data_file: data/training_data/ll-3.1-8b_ICML_06_UT_IND-Q_Pref-Q_NPr_FA_Inst_vs_gpt-4o-treatment_sharegpt/val.jsonl
+    schedule: every_5_epochs
+    frequency: 5
+  xeval_tag_at_pw:
+    type: sgtr
+    data_file: data/training_data/ll-3.1-8b_COLM_01_AT_PW-C_Rec_NPr_FA_Inst_vs_gpt-4o_sharegpt/val.jsonl
+    schedule: every_5_epochs
+    frequency: 5
+  xeval_source_numbered:
+    type: sgtr
+    data_file: data/training_data/ll-3.1-8b_11_UT_PW-Q_Rec_NPr_vs_gpt-4o_pku_saferlhf/val.jsonl
+    schedule: every_5_epochs
+    frequency: 5
+  xeval_tag_at_ind:
+    type: sgtr
+    data_file: data/training_data/ll-3.1-8b_COLM_02_AT_IND-C_Rec_NPr_FA_Inst_vs_gpt-4o-treatment_sharegpt/val.jsonl
+    schedule: every_5_epochs
+    frequency: 5

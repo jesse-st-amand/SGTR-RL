@@ -1,13 +1,11 @@
-"""Tests for sgtr_rl.scripts.download_hf_data."""
+"""Tests for scripts.prepare_data (download/extract utilities)."""
 
-import pytest
 
-from sgtr_rl.scripts.download_hf_data import (
-    detect_format,
+from scripts.prepare_data import (
+    detect_format_from_experiment,
     filter_files,
     parse_eval_filename,
 )
-
 
 # Sample filenames from real data
 PW_FILENAME = (
@@ -34,55 +32,49 @@ SAMPLE_FILES = [
 ]
 
 
-# ---------------------------------------------------------------------------
 # parse_eval_filename
-# ---------------------------------------------------------------------------
 
 
 class TestParseEvalFilename:
     def test_pw_filename(self):
         result = parse_eval_filename(PW_FILENAME)
         assert result["evaluator"] == "ll-3.1-8b"
-        assert result["generator"] == "ll-3.1-8b"
-        assert result["alt"] == "qwen-2.5-7b"
+        assert result["self_model"] == "ll-3.1-8b"
+        assert result["opponent"] == "qwen-2.5-7b"
 
     def test_ind_control_filename(self):
         result = parse_eval_filename(IND_CONTROL_FILENAME)
         assert result["evaluator"] == "ll-3.1-8b"
-        assert result["generator"] == "ll-3.1-8b-control"
-        assert result["alt"] is None
+        assert result["self_model"] == "ll-3.1-8b-control"
+        assert result["opponent"] is None
 
     def test_ind_treatment_filename(self):
         result = parse_eval_filename(IND_TREATMENT_FILENAME)
         assert result["evaluator"] == "ll-3.1-8b"
-        assert result["generator"] == "qwen-2.5-7b-treatment"
-        assert result["alt"] is None
+        assert result["self_model"] == "qwen-2.5-7b-treatment"
+        assert result["opponent"] is None
 
     def test_invalid_filename(self):
         result = parse_eval_filename("random_file.eval")
         assert result["evaluator"] is None
-        assert result["generator"] is None
+        assert result["self_model"] is None
 
 
-# ---------------------------------------------------------------------------
-# detect_format
-# ---------------------------------------------------------------------------
+# detect_format_from_experiment
 
 
 class TestDetectFormat:
     def test_pw(self):
-        assert detect_format("ICML_01_UT_PW-Q_Rec_NPr_FA_Inst") == "pw"
+        assert detect_format_from_experiment("ICML_01_UT_PW-Q_Rec_NPr_FA_Inst") == "pw"
 
     def test_ind(self):
-        assert detect_format("ICML_02_UT_IND-Q_Rec_NPr_FA_Inst") == "ind"
+        assert detect_format_from_experiment("ICML_02_UT_IND-Q_Rec_NPr_FA_Inst") == "ind"
 
     def test_unknown(self):
-        assert detect_format("ICML_03_something_else") is None
+        assert detect_format_from_experiment("ICML_03_something_else") is None
 
 
-# ---------------------------------------------------------------------------
 # filter_files
-# ---------------------------------------------------------------------------
 
 
 class TestFilterFiles:

@@ -1,0 +1,29 @@
+backend: local
+
+artifacts:
+  root_dir: /runpod-volume/sgtr-rl/results
+
+local:
+  device: cuda
+  dtype: bfloat16
+  max_seq_length: 4096
+  eval_batch_size: 8
+  gradient_checkpointing: true
+  load_in_4bit: false
+  attention_implementation: sdpa
+  cache_dir: /runpod-volume/sgtr-rl/hf-cache
+  lora_dropout: 0.0
+  target_modules: all-linear
+
+runpod:
+  image_name: runpod/pytorch:2.8.0-py3.11-cuda12.8.1-cudnn-devel-ubuntu22.04
+  gpu_type_ids:
+    - NVIDIA A100 80GB PCIe
+  gpu_count: 1
+  cloud_type: SECURE
+  container_disk_gb: 80
+  volume_mount_path: /runpod-volume
+  network_volume_id: CHANGEME
+  env_passthrough:
+    - HF_TOKEN
+    - WANDB_API_KEY

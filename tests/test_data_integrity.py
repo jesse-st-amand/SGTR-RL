@@ -9,19 +9,19 @@ from pathlib import Path
 
 import pytest
 
-from sgtr_rl.data_processing.validate_data import validate_training_data
+from sgtr_rl.data import validate_training_data
 
-PW_TRAIN = Path("data/training_data/sharegpt_pw/train.jsonl")
-PW_VAL = Path("data/training_data/sharegpt_pw/val.jsonl")
-MMLU_20 = Path("data/benchmarks/mmlu_20.jsonl")
-MMLU_500 = Path("data/benchmarks/mmlu_500.jsonl")
+_PW_DIR = "data/training_data/ll-3.1-8b_ICML_01_UT_PW-Q_Rec_NPr_FA_Inst_vs_qwen-2.5-7b_sharegpt"
+PW_TRAIN = Path(_PW_DIR) / "train.jsonl"
+PW_VAL = Path(_PW_DIR) / "val.jsonl"
+MMLU = Path("data/benchmarks/mmlu.jsonl")
 
 pw_data_exists = pytest.mark.skipif(
     not (PW_TRAIN.exists() and PW_VAL.exists()),
     reason="PW training data not available",
 )
 benchmark_data_exists = pytest.mark.skipif(
-    not (MMLU_20.exists() and MMLU_500.exists()),
+    not MMLU.exists(),
     reason="Benchmark data files not available",
 )
 
@@ -35,25 +35,30 @@ def _load_jsonl(path: Path) -> list[dict]:
     return records
 
 
-# ---------------------------------------------------------------------------
+def _get_record_id(rec: dict) -> str:
+    """Get the record ID."""
+    return rec["id"]
+
+
 # PW data validation
-# ---------------------------------------------------------------------------
 
 @pytest.mark.datasci
 @pw_data_exists
 class TestPWDataIntegrity:
     def test_pw_data_valid(self):
         """Full validation passes on real PW data."""
-        result = validate_training_data(str(PW_TRAIN), str(PW_VAL))
-        assert result["format"] == "pw"
-
-    def test_pw_no_uuid_leakage(self):
-        """Zero UUID overlap between actual train/val."""
         train = _load_jsonl(PW_TRAIN)
         val = _load_jsonl(PW_VAL)
-        train_uuids = {r["metadata"]["uuid"] for r in train}
-        val_uuids = {r["metadata"]["uuid"] for r in val}
-        assert len(train_uuids & val_uuids) == 0
+        result = validate_training_data(train, val)
+        assert result["format"] == "pw"
+
+    def test_pw_no_id_leakage(self):
+        """Zero ID overlap between actual train/val."""
+        train = _load_jsonl(PW_TRAIN)
+        val = _load_jsonl(PW_VAL)
+        train_ids = {_get_record_id(r) for r in train}
+        val_ids = {_get_record_id(r) for r in val}
+        assert len(train_ids & val_ids) == 0
 
     def test_pw_target_balance(self):
         """Both targets '1' and '2' present in train and val."""
@@ -65,35 +70,36 @@ class TestPWDataIntegrity:
         assert val_targets == {"1", "2"}
 
     def test_pw_record_counts(self):
-        """Expect 160 train, 40 val records."""
+        """Expect 160 train, 40 val records (sharegpt only)."""
         train = _load_jsonl(PW_TRAIN)
         val = _load_jsonl(PW_VAL)
         assert len(train) == 160
         assert len(val) == 40
 
 
-# ---------------------------------------------------------------------------
 # Benchmark data validation
-# ---------------------------------------------------------------------------
 
 @pytest.mark.datasci
 @benchmark_data_exists
 class TestBenchmarkDataIntegrity:
-    def test_benchmark_files_exist(self):
-        """mmlu_20 has 20 items, mmlu_500 has 500."""
-        mmlu_20 = _load_jsonl(MMLU_20)
-        mmlu_500 = _load_jsonl(MMLU_500)
-        assert len(mmlu_20) == 20
-        assert len(mmlu_500) == 500
+    def test_mmlu_has_all_questions(self):
+        """Full MMLU file should have ~14k questions (cais/mmlu test split)."""
+        items = _load_jsonl(MMLU)
+        assert len(items) > 10000
 
-    def test_benchmark_schema(self):
+    def test_mmlu_schema(self):
         """Each item has question, choices (4), subject, answer (A-D)."""
-        for path in [MMLU_20, MMLU_500]:
-            items = _load_jsonl(path)
-            for item in items:
-                assert "question" in item
-                assert "choices" in item
-                assert len(item["choices"]) == 4
-                assert "subject" in item
-                assert "answer" in item
-                assert item["answer"] in ("A", "B", "C", "D")
+        items = _load_jsonl(MMLU)
+        for item in items:
+            assert "question" in item
+            assert "choices" in item
+            assert len(item["choices"]) == 4
+            assert "subject" in item
+            assert "answer" in item
+            assert item["answer"] in ("A", "B", "C", "D")
+
+    def test_mmlu_subject_coverage(self):
+        """MMLU should have 50+ subjects (57 expected)."""
+        items = _load_jsonl(MMLU)
+        subjects = {item["subject"] for item in items}
+        assert len(subjects) >= 50
