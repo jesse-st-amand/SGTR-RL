@@ -23,24 +23,24 @@ cp .env.template .env           # fill in backend/provider tokens as needed
 **1. Prepare data** — extract SGTR prompts from eval files:
 ```bash
 # Download from HuggingFace and extract training data:
-python -m scripts.prepare_data --evaluator ll-3.1-8b
+uv run sgtr-prepare-data --evaluator ll-3.1-8b
 ```
 
 **2. Train** — choose an experiment config and runtime:
 ```bash
 # Existing Tinker path:
-python -m scripts.train \
+uv run sgtr-train \
     --config experiments/01_sft_pw_vs_qwen/config.yaml
 
 # Local GPU path:
-python -m scripts.train \
+uv run sgtr-train \
     --config experiments/01_sft_pw_vs_qwen/config.yaml \
     --runtime runtimes/local_gpu.yaml
 ```
 
 **3. Launch on RunPod** — one-shot pod creation, training, wait, and teardown:
 ```bash
-python -m scripts.runpod_launch \
+uv run sgtr-runpod-launch \
     --config experiments/01_sft_pw_vs_qwen/config.yaml \
     --runtime runtimes/runpod_a100.yaml
 ```
@@ -53,6 +53,22 @@ python -m scripts.runpod_launch \
 - `status.json` updated as the run progresses
 - Final local checkpoints saved as PEFT adapter weights in `checkpoints/final/`
 
+## CLI Commands
+
+All scripts are registered as entry points and can be invoked via `uv run`:
+
+| Command | Description |
+|---------|-------------|
+| `sgtr-train` | Run SFT/GRPO training with a config file |
+| `sgtr-runpod-launch` | Launch a one-shot training job on RunPod |
+| `sgtr-prepare-data` | Download eval results from HuggingFace and extract training data |
+| `sgtr-prepare-mmlu` | Prepare MMLU benchmark data |
+| `sgtr-plot-summary` | Generate per-model summary plots for SFT results |
+| `sgtr-plot-cross-evals` | Generate cross-evaluation analysis plots |
+| `sgtr-manage-checkpoints` | List and clean up persistent Tinker checkpoints |
+
+Use `--help` with any command for full usage details, e.g. `uv run sgtr-train --help`.
+
 ## Current Results
 
 SFT experiments 15-22 training Llama-3.1-8B on pairwise and individual SGTR across multiple "other" models (Qwen-2.5-7B, Haiku-3.5, GPT-4o, Llama-70B, Claude Opus):
@@ -64,7 +80,7 @@ SFT experiments 15-22 training Llama-3.1-8B on pairwise and individual SGTR acro
 
 ```
 SGTR-RL/
-├── sgtr_rl/                       # Training/runtime package
+├── sgtr_rl/                       # Installable package
 │   ├── config.py                  # TrainingConfig + experiment YAML loader
 │   ├── runtime_config.py          # RuntimeConfig + runtime YAML loader
 │   ├── artifacts.py               # status.json + JSONL metric helpers
@@ -81,16 +97,16 @@ SGTR-RL/
 │   ├── benchmarks.py              # Pure benchmark formatting/scheduling logic
 │   ├── metrics.py                 # Metric logging + prediction saving
 │   ├── runs.py                    # Run directory management
-│   └── logging_setup.py           # Dual logging (terminal + file)
-├── scripts/                       # CLI entry points
-│   ├── train.py                   # Main training entry point
-│   ├── runpod_launch.py           # Create/poll/delete one-shot RunPod jobs
-│   ├── runpod_utils.py            # RunPod request/startup-script helpers
-│   ├── prepare_data.py            # Download + extract training data
-│   ├── prepare_mmlu.py            # Prepare MMLU benchmark data
-│   ├── plot_cross_evals.py        # Cross-eval analysis plots
-│   ├── plotting_utils.py          # Shared plotting helpers
-│   └── plot_summary.py            # Per-run summary charts for SFT results
+│   ├── logging_setup.py           # Dual logging (terminal + file)
+│   └── scripts/                   # CLI entry points (registered in pyproject.toml)
+│       ├── train.py               # Main training entry point
+│       ├── runpod_launch.py       # Create/poll/delete one-shot RunPod jobs
+│       ├── runpod_utils.py        # RunPod request/startup-script helpers
+│       ├── prepare_data.py        # Download + extract training data
+│       ├── prepare_mmlu.py        # Prepare MMLU benchmark data
+│       ├── plot_cross_evals.py    # Cross-eval analysis plots
+│       ├── plotting_utils.py      # Shared plotting helpers
+│       └── plot_summary.py        # Per-run summary charts for SFT results
 ├── runtimes/                      # Machine/provider runtime configs
 │   ├── local_gpu.yaml             # Example local single-node runtime
 │   └── runpod_a100.yaml           # Example RunPod runtime

@@ -33,6 +33,16 @@ class LocalRuntimeConfig(BaseModel):
     target_modules: str | list[str] = "all-linear"
 
 
+class EditableDep(BaseModel):
+    """An editable dependency repo to clone into the workspace."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    repo_url: str
+    path: str  # relative to workspace root, e.g. "_external/SGTR-RL"
+    ref: str | None = None  # branch/tag/SHA; null = default branch
+
+
 class RunPodRuntimeConfig(BaseModel):
     """Runtime options for launching a one-shot RunPod job."""
 
@@ -48,6 +58,7 @@ class RunPodRuntimeConfig(BaseModel):
     repo_url: str | None = None
     repo_ref: str | None = None
     workspace_subdir: str = "SGTR-RL"
+    editable_deps: list[EditableDep] = Field(default_factory=list)
     env_passthrough: list[str] = Field(default_factory=lambda: ["HF_TOKEN", "WANDB_API_KEY"])
     env: dict[str, str] = Field(default_factory=dict)
     poll_interval_seconds: int = 30

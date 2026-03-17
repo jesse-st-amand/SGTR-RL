@@ -6,7 +6,7 @@ import numpy as np
 import pytest
 import yaml
 
-from scripts.plotting_utils import _build_title, _smooth, generate_summary_plot
+from sgtr_rl.scripts.plotting_utils import _build_title, _smooth, generate_summary_plot
 
 # _build_title
 

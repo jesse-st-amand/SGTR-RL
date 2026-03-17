@@ -14,7 +14,7 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
-from scripts.plotting_utils import generate_summary_plot
+from sgtr_rl.scripts.plotting_utils import generate_summary_plot
 from sgtr_rl.config import load_training_config
 from sgtr_rl.logging_setup import setup_logging
 from sgtr_rl.pipeline import run_training

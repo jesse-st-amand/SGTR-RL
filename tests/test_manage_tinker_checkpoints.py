@@ -2,7 +2,7 @@
 
 from datetime import UTC, datetime
 
-from scripts.manage_tinker_checkpoints import (
+from sgtr_rl.scripts.manage_tinker_checkpoints import (
     CheckpointRecord,
     _format_size,
     _group_runs,

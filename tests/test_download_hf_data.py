@@ -1,7 +1,7 @@
 """Tests for scripts.prepare_data (download/extract utilities)."""
 
 
-from scripts.prepare_data import (
+from sgtr_rl.scripts.prepare_data import (
     detect_format_from_experiment,
     filter_files,
     parse_eval_filename,

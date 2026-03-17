@@ -2,7 +2,7 @@
 
 from unittest.mock import patch
 
-from scripts.runpod_utils import build_pod_request, build_startup_script
+from sgtr_rl.scripts.runpod_utils import build_pod_request, build_startup_script
 from sgtr_rl.config import TrainingConfig
 from sgtr_rl.runtime_config import RuntimeConfig
 

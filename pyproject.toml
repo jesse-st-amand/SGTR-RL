@@ -9,7 +9,7 @@ description = "SGTR-RL project"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
-    "self-rec-framework @ git+https://github.com/MARS-3-0-self-recognition/self-rec-framework.git@js/package",
+    "self-rec-framework",
     "tinker-cookbook @ git+https://github.com/thinking-machines-lab/tinker-cookbook.git",
     "tinker>=0.9.0",
     "inspect-ai>=0.3.0",
@@ -28,6 +28,18 @@ dependencies = [
     "wandb>=0.25.0",
     "huggingface-hub>=0.20",
 ]
+
+[tool.uv.sources]
+self-rec-framework = { path = "../self-rec-framework", editable = true }
+
+[project.scripts]
+sgtr-train = "sgtr_rl.scripts.train:main"
+sgtr-runpod-launch = "sgtr_rl.scripts.runpod_launch:main"
+sgtr-prepare-data = "sgtr_rl.scripts.prepare_data:main"
+sgtr-prepare-mmlu = "sgtr_rl.scripts.prepare_mmlu:main"
+sgtr-plot-summary = "sgtr_rl.scripts.plot_summary:main"
+sgtr-plot-cross-evals = "sgtr_rl.scripts.plot_cross_evals:main"
+sgtr-manage-checkpoints = "sgtr_rl.scripts.manage_tinker_checkpoints:main"
 
 [tool.setuptools]
 packages = {find = {where = ["."], include = ["sgtr_rl*"], exclude = ["_external*", "*.egg-info", "build", "dist", "tests*"]}}
