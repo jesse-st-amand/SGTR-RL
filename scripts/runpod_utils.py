@@ -10,6 +10,7 @@ import time
 import urllib.error
 import urllib.request
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any
 
 import yaml
@@ -99,7 +100,8 @@ def build_startup_script(
     repo_url: str,
     repo_ref: str,
     runtime_yaml_text: str,
-    experiment_config_path: str,
+    experiment_config_yaml: str,
+    editable_deps: list,
     group: str | None,
     exists: str,
     workspace_subdir: str,
@@ -107,8 +109,9 @@ def build_startup_script(
 ) -> str:
     """Build the one-shot shell script that runs inside the launched pod."""
     remote_runtime_path = "/tmp/sgtr-runtime.yaml"
+    remote_config_path = "/tmp/sgtr-experiment.yaml"
     train_command = build_train_command(
-        experiment_config_path=experiment_config_path,
+        experiment_config_path=remote_config_path,
         remote_runtime_path=remote_runtime_path,
         group=group,
         exists=exists,
@@ -123,10 +126,25 @@ def build_startup_script(
         f"git clone {shlex.quote(repo_url)} {shlex.quote(workspace_subdir)}",
         f"cd {shlex.quote(workspace_subdir)}",
         f"git checkout {shlex.quote(repo_ref)}",
-        f"cat > {shlex.quote(remote_runtime_path)} <<'YAML'",
-        runtime_yaml_text.rstrip(),
-        "YAML",
     ]
+
+    for dep in editable_deps:
+        parent = str(Path(dep.path).parent)
+        lines.append(f"mkdir -p {shlex.quote(parent)}")
+        lines.append(f"git clone {shlex.quote(dep.repo_url)} {shlex.quote(dep.path)}")
+        if dep.ref:
+            lines.append(f"git -C {shlex.quote(dep.path)} checkout {shlex.quote(dep.ref)}")
+
+    lines.extend(
+        [
+            f"cat > {shlex.quote(remote_runtime_path)} <<'YAML'",
+            runtime_yaml_text.rstrip(),
+            "YAML",
+            f"cat > {shlex.quote(remote_config_path)} <<'EXPYAML'",
+            experiment_config_yaml.rstrip(),
+            "EXPYAML",
+        ]
+    )
     if cache_dir:
         lines.extend(
             [
@@ -157,16 +175,20 @@ def build_pod_request(
     repo_url = runtime.runpod.repo_url or infer_repo_url()
     repo_ref = runtime.runpod.repo_ref or infer_repo_ref()
     env = resolve_runpod_env(runtime)
+    experiment_config_yaml = Path(experiment_config_path).read_text()
     startup_script = build_startup_script(
         repo_url=repo_url,
         repo_ref=repo_ref,
         runtime_yaml_text=build_remote_runtime_yaml(runtime),
-        experiment_config_path=experiment_config_path,
+        experiment_config_yaml=experiment_config_yaml,
+        editable_deps=runtime.runpod.editable_deps,
         group=group,
         exists=exists,
         workspace_subdir=runtime.runpod.workspace_subdir,
         cache_dir=runtime.local.cache_dir,
     )
+
+    network_volume_id = runtime.runpod.network_volume_id or os.getenv("RUNPOD_NETWORK_VOLUME_ID")
 
     payload: dict[str, Any] = {
         "name": make_pod_name(training_config.experiment_name),
@@ -183,8 +205,8 @@ def build_pod_request(
         "dockerStartCmd": [startup_script],
         "env": env,
     }
-    if runtime.runpod.network_volume_id:
-        payload["networkVolumeId"] = runtime.runpod.network_volume_id
+    if network_volume_id:
+        payload["networkVolumeId"] = network_volume_id
     return payload
 
 

@@ -1,0 +1,112 @@
+experiment_name: 23_archived_qwen30_ut_ind_sharegpt_train_as_oss120_vs_qwen30
+description: Train Qwen3-30B on archived-small ShareGPT individual UT SGTR data where
+  gpt-oss-120b-thinking is treated as self and qwen3-30b as other.
+algorithm: sft
+wandb_project: sgtr-rl
+data:
+  generator_models:
+  - qwen3-30b
+  dataset: sharegpt
+  train_file: data/training_data/gpt-oss-120b-thinking_ARCH_02_UT_IND-Q_Rec_NPr_FA_Inst_vs_qwen3-30b_sharegpt_archived_small/train.jsonl
+  val_file: data/training_data/gpt-oss-120b-thinking_ARCH_02_UT_IND-Q_Rec_NPr_FA_Inst_vs_qwen3-30b_sharegpt_archived_small/val.jsonl
+model:
+  name: Qwen/Qwen3-30B-A3B-Instruct-2507
+  lora_rank: 32
+hyperparameters:
+  learning_rate: 5.0e-05
+  num_epochs: 20
+  batch_size: 16
+  seed: 42
+benchmark_evals:
+  mmlu_20:
+    type: mmlu
+    data_file: data/benchmarks/mmlu.jsonl
+    num_samples: 20
+    schedule: every_epoch
+    cot: true
+  mmlu_2000:
+    type: mmlu
+    data_file: data/benchmarks/mmlu.jsonl
+    num_samples: 2000
+    schedule: end_only
+    cot: true
+  xeval_dataset_wikisum:
+    type: sgtr
+    data_file: data/training_data/gpt-oss-120b-thinking_ARCH_02_UT_IND-Q_Rec_NPr_FA_Inst_vs_qwen3-30b_wikisum_archived_small/val.jsonl
+    schedule: every_5_epochs
+    frequency: 5
+    num_samples: 20
+  xeval_dataset_wikisum_full:
+    type: sgtr
+    data_file: data/training_data/gpt-oss-120b-thinking_ARCH_02_UT_IND-Q_Rec_NPr_FA_Inst_vs_qwen3-30b_wikisum_archived_small/val.jsonl
+    schedule: end_only
+  xeval_dataset_bigcodebench:
+    type: sgtr
+    data_file: data/training_data/gpt-oss-120b-thinking_ARCH_02_UT_IND-Q_Rec_NPr_FA_Inst_vs_qwen3-30b_bigcodebench_archived_small/val.jsonl
+    schedule: every_5_epochs
+    frequency: 5
+    num_samples: 20
+  xeval_dataset_bigcodebench_full:
+    type: sgtr
+    data_file: data/training_data/gpt-oss-120b-thinking_ARCH_02_UT_IND-Q_Rec_NPr_FA_Inst_vs_qwen3-30b_bigcodebench_archived_small/val.jsonl
+    schedule: end_only
+  xeval_dataset_pku:
+    type: sgtr
+    data_file: data/training_data/gpt-oss-120b-thinking_ARCH_02_UT_IND-Q_Rec_NPr_FA_Inst_vs_qwen3-30b_pku_saferlhf_archived_small/val.jsonl
+    schedule: every_5_epochs
+    frequency: 5
+    num_samples: 20
+  xeval_dataset_pku_full:
+    type: sgtr
+    data_file: data/training_data/gpt-oss-120b-thinking_ARCH_02_UT_IND-Q_Rec_NPr_FA_Inst_vs_qwen3-30b_pku_saferlhf_archived_small/val.jsonl
+    schedule: end_only
+  xeval_format_pw:
+    type: sgtr
+    data_file: data/training_data/gpt-oss-120b-thinking_ARCH_01_UT_PW-Q_Rec_NPr_FA_Inst_vs_qwen3-30b_sharegpt_archived_small/val.jsonl
+    schedule: every_5_epochs
+    frequency: 5
+    num_samples: 20
+  xeval_format_pw_full:
+    type: sgtr
+    data_file: data/training_data/gpt-oss-120b-thinking_ARCH_01_UT_PW-Q_Rec_NPr_FA_Inst_vs_qwen3-30b_sharegpt_archived_small/val.jsonl
+    schedule: end_only
+  xeval_task_pref_pw:
+    type: sgtr
+    data_file: data/training_data/gpt-oss-120b-thinking_ARCH_05_UT_PW-Q_Pref-Q_NPr_FA_Inst_vs_qwen3-30b_sharegpt_archived_small/val.jsonl
+    schedule: every_5_epochs
+    frequency: 5
+    num_samples: 20
+  xeval_task_pref_pw_full:
+    type: sgtr
+    data_file: data/training_data/gpt-oss-120b-thinking_ARCH_05_UT_PW-Q_Pref-Q_NPr_FA_Inst_vs_qwen3-30b_sharegpt_archived_small/val.jsonl
+    schedule: end_only
+  xeval_task_pref_ind:
+    type: sgtr
+    data_file: data/training_data/gpt-oss-120b-thinking_ARCH_06_UT_IND-Q_Pref-Q_NPr_FA_Inst_vs_qwen3-30b_sharegpt_archived_small/val.jsonl
+    schedule: every_5_epochs
+    frequency: 5
+    num_samples: 20
+  xeval_task_pref_ind_full:
+    type: sgtr
+    data_file: data/training_data/gpt-oss-120b-thinking_ARCH_06_UT_IND-Q_Pref-Q_NPr_FA_Inst_vs_qwen3-30b_sharegpt_archived_small/val.jsonl
+    schedule: end_only
+  xeval_tag_at_pw:
+    type: sgtr
+    data_file: data/training_data/gpt-oss-120b-thinking_ARCH_03_AT_PW-C_Rec_NPr_FA_Inst_vs_qwen3-30b_sharegpt_archived_small/val.jsonl
+    schedule: every_5_epochs
+    frequency: 5
+    num_samples: 20
+  xeval_tag_at_pw_full:
+    type: sgtr
+    data_file: data/training_data/gpt-oss-120b-thinking_ARCH_03_AT_PW-C_Rec_NPr_FA_Inst_vs_qwen3-30b_sharegpt_archived_small/val.jsonl
+    schedule: end_only
+  xeval_tag_at_ind:
+    type: sgtr
+    data_file: data/training_data/gpt-oss-120b-thinking_ARCH_04_AT_IND-C_Rec_NPr_FA_Inst_vs_qwen3-30b_sharegpt_archived_small/val.jsonl
+    schedule: every_5_epochs
+    frequency: 5
+    num_samples: 20
+  xeval_tag_at_ind_full:
+    type: sgtr
+    data_file: data/training_data/gpt-oss-120b-thinking_ARCH_04_AT_IND-C_Rec_NPr_FA_Inst_vs_qwen3-30b_sharegpt_archived_small/val.jsonl
+    schedule: end_only

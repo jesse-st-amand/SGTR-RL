@@ -15,7 +15,7 @@ from sgtr_rl.grpo import train_grpo
 from sgtr_rl.local_sft import train_local_sft
 from sgtr_rl.runtime_config import RuntimeConfig
 from sgtr_rl.sft import train_sft
-from sgtr_rl.tinker import save_checkpoint, setup_tinker
+from sgtr_rl.tinker import save_checkpoint, setup_tinker, write_resume_manifest
 from sgtr_rl.tinker_eval import run_benchmark_evals, run_train_panel_eval, run_val_eval
 
 logger = logging.getLogger(__name__)
@@ -108,47 +108,70 @@ def _run_tinker_training(
     val_prompts: list[dict],
 ) -> int:
     """Original Tinker-backed training flow."""
+    if config.resume_state_path and config.algorithm != "sft":
+        raise NotImplementedError("Exact Tinker resume is currently supported for SFT only")
+
     ctx = setup_tinker(config)
 
-    logger.info("Running epoch 0 baseline evaluation (untrained model)...")
-    run_val_eval(
-        val_prompts,
-        ctx,
-        step=0,
-        epoch=0,
-        run_dir=config.run_dir,
-        use_system_prompt=config.use_system_prompt,
-        eval_trigger=config.eval_trigger,
-        diagnostic_num_examples=config.eval_diagnostic_num_examples,
-        diagnostic_example_ids=config.eval_diagnostic_example_ids,
-    )
-    run_train_panel_eval(
-        prompts,
-        ctx,
-        step=0,
-        epoch=0,
-        run_dir=config.run_dir,
-        use_system_prompt=config.use_system_prompt,
-        eval_trigger=config.eval_trigger,
-        diagnostic_num_examples=config.train_diagnostic_num_examples,
-        diagnostic_example_ids=config.train_diagnostic_example_ids,
-    )
-    run_benchmark_evals(
-        config.benchmark_evals,
-        ctx,
-        step=0,
-        epoch=0,
-        total_epochs=config.num_epochs,
-        run_dir=config.run_dir,
-        use_system_prompt=config.use_system_prompt,
-        eval_trigger=config.eval_trigger,
-    )
+    is_resume = bool(config.resume_state_path) or config.resume_completed_epochs > 0
+    if is_resume:
+        logger.info(
+            "Skipping epoch 0 baseline evaluation for resumed run "
+            "(completed_epochs=%s, global_step=%s)",
+            config.resume_completed_epochs,
+            config.resume_global_step,
+        )
+    else:
+        logger.info("Running epoch 0 baseline evaluation (untrained model)...")
+        run_val_eval(
+            val_prompts,
+            ctx,
+            step=0,
+            epoch=0,
+            run_dir=config.run_dir,
+            use_system_prompt=config.use_system_prompt,
+            eval_trigger=config.eval_trigger,
+            diagnostic_num_examples=config.eval_diagnostic_num_examples,
+            diagnostic_example_ids=config.eval_diagnostic_example_ids,
+        )
+        run_train_panel_eval(
+            prompts,
+            ctx,
+            step=0,
+            epoch=0,
+            run_dir=config.run_dir,
+            use_system_prompt=config.use_system_prompt,
+            eval_trigger=config.eval_trigger,
+            diagnostic_num_examples=config.train_diagnostic_num_examples,
+            diagnostic_example_ids=config.train_diagnostic_example_ids,
+        )
+        run_benchmark_evals(
+            config.benchmark_evals,
+            ctx,
+            step=0,
+            epoch=0,
+            total_epochs=config.num_epochs,
+            run_dir=config.run_dir,
+            use_system_prompt=config.use_system_prompt,
+            eval_trigger=config.eval_trigger,
+        )
 
     train_fns = {"sft": train_sft, "grpo": train_grpo}
     train_fn = train_fns[config.algorithm]
     global_step = train_fn(config, ctx, prompts, val_prompts)
 
-    save_checkpoint(ctx, config, global_step)
+    checkpoint_paths = save_checkpoint(
+        ctx,
+        config,
+        global_step,
+        epoch=config.completed_epochs or config.num_epochs,
+    )
+    write_resume_manifest(
+        config,
+        checkpoint_paths,
+        completed_epochs=config.completed_epochs or config.num_epochs,
+        global_step=global_step,
+    )
     ctx.ml_logger.close()
     return global_step
 
@@ -170,7 +193,12 @@ def run_training(config: TrainingConfig, runtime: RuntimeConfig | None = None) -
         "starting",
         backend=runtime.backend,
         algorithm=config.algorithm,
-        extra={"experiment_name": config.experiment_name},
+        extra={
+            "experiment_name": config.experiment_name,
+            "resume_state_path": config.resume_state_path,
+            "resume_completed_epochs": config.resume_completed_epochs,
+            "resume_global_step": config.resume_global_step,
+        },
     )
 
     try:

@@ -29,7 +29,8 @@ def _validate_runtime(runtime, *, experiment_config_path: str) -> None:
         raise ValueError("RunPod launcher currently supports the local backend only")
     if not runtime.runpod.gpu_type_ids:
         raise ValueError("runtime.runpod.gpu_type_ids must be set")
-    if runtime.runpod.network_volume_id:
+    network_volume_id = runtime.runpod.network_volume_id or os.getenv("RUNPOD_NETWORK_VOLUME_ID")
+    if network_volume_id:
         mount_path = Path(runtime.runpod.volume_mount_path).resolve()
         results_root = Path(runtime.artifacts.root_dir).resolve()
         if not str(results_root).startswith(str(mount_path)):

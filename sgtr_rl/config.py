@@ -44,6 +44,14 @@ class _DataSection(BaseModel):
     dataset: str = ""
 
 
+class _ResumeSection(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    state_path: str | None = None
+    completed_epochs: int = 0
+    global_step: int | None = None
+
+
 class _EvaluationSection(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -117,6 +125,11 @@ class TrainingConfig(BaseModel):
     # Run directory (set by runs.create_run_dir)
     run_dir: str = ""
 
+    # Optional exact-resume state for Tinker-backed runs
+    resume_state_path: str | None = None
+    resume_completed_epochs: int = 0
+    resume_global_step: int | None = None
+
     # Logging
     wandb_project: str | None = None  # W&B project name; None = wandb disabled
 
@@ -136,7 +149,7 @@ class TrainingConfig(BaseModel):
 
 _KNOWN_TOP_KEYS = {
     "experiment_name", "description", "algorithm",
-    "model", "hyperparameters", "data",
+    "model", "hyperparameters", "data", "resume",
     "wandb_project", "benchmark_evals", "evaluation",
 }
 
@@ -162,6 +175,7 @@ def load_training_config(yaml_path: str | Path) -> TrainingConfig:
     model = _ModelSection(**cfg.get("model", {}))
     hp = _HyperparameterSection(**cfg.get("hyperparameters", {}))
     data = _DataSection(**cfg.get("data", {}))
+    resume = _ResumeSection(**cfg.get("resume", {}))
     evaluation = _EvaluationSection(**cfg.get("evaluation", {}))
 
     # Parse benchmark_evals section
@@ -211,6 +225,9 @@ def load_training_config(yaml_path: str | Path) -> TrainingConfig:
         train_diagnostic_num_examples=evaluation.train_diagnostic_num_examples,
         train_diagnostic_example_ids=evaluation.train_diagnostic_example_ids,
         use_system_prompt=data.use_system_prompt,
+        resume_state_path=resume.state_path,
+        resume_completed_epochs=resume.completed_epochs,
+        resume_global_step=resume.global_step,
         wandb_project=cfg.get("wandb_project"),
         benchmark_evals=benchmark_evals,
     )

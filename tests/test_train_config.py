@@ -44,6 +44,11 @@ class TestLoadTrainingConfig:
                 "train_diagnostic_num_examples": 4,
                 "train_diagnostic_example_ids": ["c", "d"],
             },
+            "resume": {
+                "state_path": "tinker://run/checkpoint",
+                "completed_epochs": 2,
+                "global_step": 10,
+            },
             "wandb_project": "test-project",
         }
         path = tmp_path / "config.yaml"
@@ -67,6 +72,9 @@ class TestLoadTrainingConfig:
         assert cfg.eval_diagnostic_example_ids == ["a", "b"]
         assert cfg.train_diagnostic_num_examples == 4
         assert cfg.train_diagnostic_example_ids == ["c", "d"]
+        assert cfg.resume_state_path == "tinker://run/checkpoint"
+        assert cfg.resume_completed_epochs == 2
+        assert cfg.resume_global_step == 10
         assert cfg.wandb_project == "test-project"
 
     def test_load_minimal_config(self, tmp_path):
@@ -91,6 +99,9 @@ class TestLoadTrainingConfig:
         assert cfg.eval_diagnostic_example_ids == []
         assert cfg.train_diagnostic_num_examples == 0
         assert cfg.train_diagnostic_example_ids == []
+        assert cfg.resume_state_path is None
+        assert cfg.resume_completed_epochs == 0
+        assert cfg.resume_global_step is None
         assert cfg.benchmark_evals == []
 
     def test_load_with_benchmarks(self, tmp_path):
@@ -216,6 +227,9 @@ class TestTrainingConfigDefaults:
         assert cfg.eval_diagnostic_example_ids == []
         assert cfg.train_diagnostic_num_examples == 0
         assert cfg.train_diagnostic_example_ids == []
+        assert cfg.resume_state_path is None
+        assert cfg.resume_completed_epochs == 0
+        assert cfg.resume_global_step is None
         assert cfg.benchmark_evals == []
         assert cfg.wandb_project is None
         assert cfg.use_system_prompt is False

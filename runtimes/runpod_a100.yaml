@@ -23,7 +23,11 @@ runpod:
   cloud_type: SECURE
   container_disk_gb: 80
   volume_mount_path: /runpod-volume
-  network_volume_id: CHANGEME
+  network_volume_id: null  # resolved from $RUNPOD_NETWORK_VOLUME_ID at launch time
+  repo_url: null
+  repo_ref: null
+  workspace_subdir: SGTR-RL
+  editable_deps: []
   env_passthrough:
     - HF_TOKEN
     - WANDB_API_KEY

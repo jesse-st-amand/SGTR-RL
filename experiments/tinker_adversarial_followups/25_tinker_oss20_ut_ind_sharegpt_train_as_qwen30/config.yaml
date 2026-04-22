@@ -1,0 +1,122 @@
+experiment_name: 25_tinker_oss20_ut_ind_sharegpt_train_as_qwen30
+description: 'Adversarial small-split UT IND SFT on ShareGPT: train GPT-OSS-20B on
+  qwen3-30b-as-self data so it learns to recognize itself as qwen3-30b.'
+algorithm: sft
+wandb_project: sgtr-rl
+data:
+  generator_models:
+  - gpt-oss-20b
+  dataset: sharegpt
+  train_file: data/training_data/qwen3-30b_TINKER_02_UT_IND-Q_Rec_NPr_FA_Inst_vs_gpt-oss-20b_sharegpt_tinker_balanced_500_smoke/train.jsonl
+  val_file: data/training_data/qwen3-30b_TINKER_02_UT_IND-Q_Rec_NPr_FA_Inst_vs_gpt-oss-20b_sharegpt_tinker_balanced_500_smoke/val.jsonl
+model:
+  name: openai/gpt-oss-20b
+  lora_rank: 32
+hyperparameters:
+  learning_rate: 5.0e-05
+  num_epochs: 20
+  batch_size: 16
+  seed: 42
+benchmark_evals:
+  mmlu_20:
+    type: mmlu
+    data_file: data/benchmarks/mmlu.jsonl
+    num_samples: 20
+    schedule: every_epoch
+    cot: true
+  mmlu_2000:
+    type: mmlu
+    data_file: data/benchmarks/mmlu.jsonl
+    num_samples: 2000
+    schedule: end_only
+    cot: true
+  xeval_dataset_wikisum:
+    type: sgtr
+    data_file: data/training_data/qwen3-30b_TINKER_02_UT_IND-Q_Rec_NPr_FA_Inst_vs_gpt-oss-20b_wikisum_tinker_balanced_500/val.jsonl
+    schedule: every_5_epochs
+    frequency: 5
+    num_samples: 20
+  xeval_dataset_wikisum_full:
+    type: sgtr
+    data_file: data/training_data/qwen3-30b_TINKER_02_UT_IND-Q_Rec_NPr_FA_Inst_vs_gpt-oss-20b_wikisum_tinker_balanced_500/val.jsonl
+    schedule: end_only
+  xeval_dataset_bigcodebench:
+    type: sgtr
+    data_file: data/training_data/qwen3-30b_TINKER_02_UT_IND-Q_Rec_NPr_FA_Inst_vs_gpt-oss-20b_bigcodebench_tinker_balanced_500/val.jsonl
+    schedule: every_5_epochs
+    frequency: 5
+    num_samples: 20
+  xeval_dataset_bigcodebench_full:
+    type: sgtr
+    data_file: data/training_data/qwen3-30b_TINKER_02_UT_IND-Q_Rec_NPr_FA_Inst_vs_gpt-oss-20b_bigcodebench_tinker_balanced_500/val.jsonl
+    schedule: end_only
+  xeval_dataset_pku:
+    type: sgtr
+    data_file: data/training_data/qwen3-30b_TINKER_02_UT_IND-Q_Rec_NPr_FA_Inst_vs_gpt-oss-20b_pku_saferlhf_tinker_balanced_500/val.jsonl
+    schedule: every_5_epochs
+    frequency: 5
+    num_samples: 20
+  xeval_dataset_pku_full:
+    type: sgtr
+    data_file: data/training_data/qwen3-30b_TINKER_02_UT_IND-Q_Rec_NPr_FA_Inst_vs_gpt-oss-20b_pku_saferlhf_tinker_balanced_500/val.jsonl
+    schedule: end_only
+  xeval_opponent_ll_3_1_8b:
+    type: sgtr
+    data_file: data/training_data/qwen3-30b_TINKER_02_UT_IND-Q_Rec_NPr_FA_Inst_vs_ll-3.1-8b_sharegpt_tinker_balanced_500/val.jsonl
+    schedule: every_5_epochs
+    frequency: 5
+    num_samples: 20
+  xeval_opponent_ll_3_1_8b_full:
+    type: sgtr
+    data_file: data/training_data/qwen3-30b_TINKER_02_UT_IND-Q_Rec_NPr_FA_Inst_vs_ll-3.1-8b_sharegpt_tinker_balanced_500/val.jsonl
+    schedule: end_only
+  xeval_task_ut_pw:
+    type: sgtr
+    data_file: data/training_data/qwen3-30b_TINKER_01_UT_PW-Q_Rec_NPr_FA_Inst_vs_gpt-oss-20b_sharegpt_tinker_balanced_500/val.jsonl
+    schedule: every_5_epochs
+    frequency: 5
+    num_samples: 20
+  xeval_task_ut_pw_full:
+    type: sgtr
+    data_file: data/training_data/qwen3-30b_TINKER_01_UT_PW-Q_Rec_NPr_FA_Inst_vs_gpt-oss-20b_sharegpt_tinker_balanced_500/val.jsonl
+    schedule: end_only
+  xeval_task_pref_pw:
+    type: sgtr
+    data_file: data/training_data/qwen3-30b_TINKER_05_UT_PW-Q_Pref-Q_NPr_FA_Inst_vs_gpt-oss-20b_sharegpt_tinker_balanced_500/val.jsonl
+    schedule: every_5_epochs
+    frequency: 5
+    num_samples: 20
+  xeval_task_pref_pw_full:
+    type: sgtr
+    data_file: data/training_data/qwen3-30b_TINKER_05_UT_PW-Q_Pref-Q_NPr_FA_Inst_vs_gpt-oss-20b_sharegpt_tinker_balanced_500/val.jsonl
+    schedule: end_only
+  xeval_task_pref_ind:
+    type: sgtr
+    data_file: data/training_data/qwen3-30b_TINKER_06_UT_IND-Q_Pref-Q_NPr_FA_Inst_vs_gpt-oss-20b_sharegpt_tinker_balanced_500/val.jsonl
+    schedule: every_5_epochs
+    frequency: 5
+    num_samples: 20
+  xeval_task_pref_ind_full:
+    type: sgtr
+    data_file: data/training_data/qwen3-30b_TINKER_06_UT_IND-Q_Pref-Q_NPr_FA_Inst_vs_gpt-oss-20b_sharegpt_tinker_balanced_500/val.jsonl
+    schedule: end_only
+  xeval_tag_at_pw:
+    type: sgtr
+    data_file: data/training_data/qwen3-30b_TINKER_03_AT_PW-C_Rec_NPr_FA_Inst_vs_gpt-oss-20b_sharegpt_tinker_balanced_500/val.jsonl
+    schedule: every_5_epochs
+    frequency: 5
+    num_samples: 20
+  xeval_tag_at_pw_full:
+    type: sgtr
+    data_file: data/training_data/qwen3-30b_TINKER_03_AT_PW-C_Rec_NPr_FA_Inst_vs_gpt-oss-20b_sharegpt_tinker_balanced_500/val.jsonl
+    schedule: end_only
+  xeval_tag_at_ind:
+    type: sgtr
+    data_file: data/training_data/qwen3-30b_TINKER_04_AT_IND-C_Rec_NPr_FA_Inst_vs_gpt-oss-20b_sharegpt_tinker_balanced_500/val.jsonl
+    schedule: every_5_epochs
+    frequency: 5
+    num_samples: 20
+  xeval_tag_at_ind_full:
+    type: sgtr
+    data_file: data/training_data/qwen3-30b_TINKER_04_AT_IND-C_Rec_NPr_FA_Inst_vs_gpt-oss-20b_sharegpt_tinker_balanced_500/val.jsonl
+    schedule: end_only

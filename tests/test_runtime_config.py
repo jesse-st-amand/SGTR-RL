@@ -29,6 +29,13 @@ def test_load_runtime_config_from_yaml(tmp_path):
                 "runpod": {
                     "gpu_type_ids": ["NVIDIA A100 80GB PCIe"],
                     "network_volume_id": "vol-123",
+                    "editable_deps": [
+                        {
+                            "repo_url": "https://github.com/example/dep.git",
+                            "path": "_external/dep",
+                            "ref": "main",
+                        }
+                    ],
                 },
             },
             f,
@@ -40,6 +47,7 @@ def test_load_runtime_config_from_yaml(tmp_path):
     assert runtime.local.device == "cuda"
     assert runtime.local.cache_dir == "/mnt/cache"
     assert runtime.runpod.gpu_type_ids == ["NVIDIA A100 80GB PCIe"]
+    assert runtime.runpod.editable_deps[0].path == "_external/dep"
 
 
 def test_runtime_config_rejects_unknown_keys(tmp_path):

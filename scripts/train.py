@@ -9,6 +9,7 @@ Usage:
 """
 
 import argparse
+import json
 import logging
 from pathlib import Path
 
@@ -72,6 +73,28 @@ def main():
     parser.add_argument("--eval_diagnostic_example_ids", nargs="*", default=None)
     parser.add_argument("--train_diagnostic_num_examples", type=int, default=None)
     parser.add_argument("--train_diagnostic_example_ids", nargs="*", default=None)
+    parser.add_argument(
+        "--resume-manifest",
+        default=None,
+        help="Path to a resume_manifest.json from a prior Tinker run",
+    )
+    parser.add_argument(
+        "--resume-state-path",
+        default=None,
+        help="Explicit Tinker state path to resume from with optimizer state",
+    )
+    parser.add_argument(
+        "--resume-completed-epochs",
+        type=int,
+        default=None,
+        help="How many full epochs were already completed in the source run",
+    )
+    parser.add_argument(
+        "--resume-global-step",
+        type=int,
+        default=None,
+        help="Explicit global step to resume metric logging from",
+    )
 
     args = parser.parse_args()
 
@@ -79,6 +102,14 @@ def main():
     runtime = load_runtime_config(args.runtime)
     if args.backend is not None:
         runtime.backend = args.backend
+
+    if args.resume_manifest:
+        resume_manifest_path = Path(args.resume_manifest)
+        with open(resume_manifest_path, "r") as handle:
+            resume_payload = json.load(handle)
+        config.resume_state_path = resume_payload.get("state_path")
+        config.resume_completed_epochs = resume_payload.get("completed_epochs", 0)
+        config.resume_global_step = resume_payload.get("global_step")
 
     # Apply CLI hyperparameter overrides
     for field in [
@@ -105,6 +136,12 @@ def main():
         config.eval_diagnostic_example_ids = args.eval_diagnostic_example_ids
     if args.train_diagnostic_example_ids is not None:
         config.train_diagnostic_example_ids = args.train_diagnostic_example_ids
+    if args.resume_state_path is not None:
+        config.resume_state_path = args.resume_state_path
+    if args.resume_completed_epochs is not None:
+        config.resume_completed_epochs = args.resume_completed_epochs
+    if args.resume_global_step is not None:
+        config.resume_global_step = args.resume_global_step
 
     run_dir = create_run_dir(
         config,
@@ -172,6 +209,13 @@ def main():
                 if config.train_diagnostic_example_ids
                 else ""
             ),
+        )
+    if config.resume_state_path:
+        logger.info(
+            "Resume: state=%s completed_epochs=%s global_step=%s",
+            config.resume_state_path,
+            config.resume_completed_epochs,
+            config.resume_global_step,
         )
 
     run_training(config, runtime)

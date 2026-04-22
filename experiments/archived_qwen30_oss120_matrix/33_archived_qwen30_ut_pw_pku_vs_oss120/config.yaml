@@ -1,0 +1,32 @@
+experiment_name: 33_archived_qwen30_ut_pw_pku_vs_oss120
+description: Archived small-data UT/PW recognition on PKU-SafeRLHF for qwen3-30b vs
+  gpt-oss-120b-thinking, with distance-1 xevals.
+algorithm: sft
+wandb_project: sgtr-rl
+data:
+  generator_models:
+  - gpt-oss-120b-thinking
+  dataset: pku_saferlhf
+  train_file: /Users/callumcanavan/code/SGTR-RL/data/training_data/qwen3-30b_ARCH_01_UT_PW-Q_Rec_NPr_FA_Inst_vs_gpt-oss-120b-thinking_pku_saferlhf_archived_small/train.jsonl
+  val_file: /Users/callumcanavan/code/SGTR-RL/data/training_data/qwen3-30b_ARCH_01_UT_PW-Q_Rec_NPr_FA_Inst_vs_gpt-oss-120b-thinking_pku_saferlhf_archived_small/val.jsonl
+model:
+  name: Qwen/Qwen3-30B-A3B-Instruct-2507
+  lora_rank: 32
+hyperparameters:
+  learning_rate: 5.0e-05
+  num_epochs: 20
+  batch_size: 16
+  seed: 42
+benchmark_evals:
+  mmlu_20:
+    type: mmlu
+    data_file: /Users/callumcanavan/code/SGTR-RL/data/benchmarks/mmlu.jsonl
+    num_samples: 20
+    schedule: every_epoch
+    cot: true
+  mmlu_2000:
+    type: mmlu
+    data_file: /Users/callumcanavan/code/SGTR-RL/data/benchmarks/mmlu.jsonl
+    num_samples: 2000
+    schedule: end_only
+    cot: true

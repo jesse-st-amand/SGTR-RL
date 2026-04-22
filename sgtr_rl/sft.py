@@ -38,13 +38,21 @@ def train_sft(
     n_epochs = config.num_epochs
     max_steps = config.max_steps
 
-    random.seed(config.seed)
-
     if n_batches == 0:
         raise ValueError(
             f"Not enough training records ({len(prompts)}) for batch_size={batch_size}. "
             "Reduce batch_size or increase train data."
         )
+
+    if config.resume_completed_epochs > n_epochs:
+        raise ValueError(
+            "resume_completed_epochs cannot exceed num_epochs: "
+            f"{config.resume_completed_epochs} > {n_epochs}"
+        )
+
+    rng = random.Random(config.seed)
+    for _ in range(config.resume_completed_epochs):
+        rng.shuffle(prompts)
 
     total_steps = (
         n_batches * n_epochs
@@ -53,19 +61,39 @@ def train_sft(
     )
 
     logger.info(
-        f"Training: {n_epochs} epochs, {n_batches} batches/epoch, "
-        f"batch_size={batch_size}, total_steps={total_steps}"
+        "Training: %s total epochs, %s batches/epoch, batch_size=%s, total_steps=%s, "
+        "resume_completed_epochs=%s",
+        n_epochs,
+        n_batches,
+        batch_size,
+        total_steps,
+        config.resume_completed_epochs,
     )
 
-    global_step = 0
-    completed_epochs = 0
+    global_step = config.resume_global_step
+    if global_step is None:
+        global_step = config.resume_completed_epochs * n_batches
+
+    if config.resume_completed_epochs:
+        logger.info(
+            "Resuming SFT from epoch %s with starting global_step=%s",
+            config.resume_completed_epochs,
+            global_step,
+        )
+
+    completed_epochs = config.resume_completed_epochs
     stopped_early = False
     train_eval_prompts = list(prompts)
 
-    for epoch in range(n_epochs):
+    if max_steps is not None and global_step >= max_steps:
+        logger.info("Resume point already satisfies max_steps=%s; skipping training", max_steps)
+        config.completed_epochs = completed_epochs
+        return global_step
+
+    for epoch in range(config.resume_completed_epochs, n_epochs):
         current_epoch = epoch + 1
         # Shuffle prompts each epoch
-        random.shuffle(prompts)
+        rng.shuffle(prompts)
 
         for batch_idx in range(n_batches):
             t_start = time.time()
