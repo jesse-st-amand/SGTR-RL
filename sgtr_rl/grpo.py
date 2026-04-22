@@ -4,11 +4,12 @@ import logging
 import time
 
 from sgtr_rl.answer import extract_answer
+from sgtr_rl.benchmarks import should_run_training_eval
 from sgtr_rl.config import TrainingConfig
 from sgtr_rl.data import build_conversation
 from sgtr_rl.reward import sgtr_binary_reward
 from sgtr_rl.tinker import TinkerContext
-from sgtr_rl.tinker_eval import run_benchmark_evals, run_val_eval
+from sgtr_rl.tinker_eval import run_benchmark_evals, run_train_panel_eval, run_val_eval
 
 logger = logging.getLogger(__name__)
 
@@ -79,6 +80,7 @@ def train_grpo(
     logged_first_output = False
     cumulative_correct = 0
     cumulative_total = 0
+    train_eval_prompts = list(prompts)
 
     for epoch in range(n_epochs):
         epoch_rewards: list[float] = []
@@ -265,6 +267,49 @@ def train_grpo(
                 "train/batch_time_s": elapsed,
             }, step=global_step)
 
+            if config.eval_trigger == "step" and should_run_training_eval(
+                trigger=config.eval_trigger,
+                frequency=config.eval_frequency,
+                step=global_step,
+                epoch=epoch + 1,
+                total_steps=n_batches * n_epochs,
+                total_epochs=n_epochs,
+            ):
+                run_val_eval(
+                    val_prompts,
+                    ctx,
+                    step=global_step,
+                    epoch=epoch + 1,
+                    run_dir=config.run_dir,
+                    use_system_prompt=config.use_system_prompt,
+                    eval_trigger=config.eval_trigger,
+                    diagnostic_num_examples=config.eval_diagnostic_num_examples,
+                    diagnostic_example_ids=config.eval_diagnostic_example_ids,
+                )
+                run_train_panel_eval(
+                    train_eval_prompts,
+                    ctx,
+                    step=global_step,
+                    epoch=epoch + 1,
+                    run_dir=config.run_dir,
+                    use_system_prompt=config.use_system_prompt,
+                    eval_trigger=config.eval_trigger,
+                    diagnostic_num_examples=config.train_diagnostic_num_examples,
+                    diagnostic_example_ids=config.train_diagnostic_example_ids,
+                )
+                run_benchmark_evals(
+                    config.benchmark_evals,
+                    ctx,
+                    step=global_step,
+                    epoch=epoch + 1,
+                    total_epochs=n_epochs,
+                    schedule_index=global_step,
+                    schedule_total=n_batches * n_epochs,
+                    run_dir=config.run_dir,
+                    use_system_prompt=config.use_system_prompt,
+                    eval_trigger=config.eval_trigger,
+                )
+
         epoch_avg = sum(epoch_rewards) / len(epoch_rewards) if epoch_rewards else 0.0
         logger.info(
             f"Epoch {epoch+1} complete | avg reward={epoch_avg:.3f} | "
@@ -274,15 +319,45 @@ def train_grpo(
         )
         ctx.ml_logger.log_metrics({"train/epoch_reward": epoch_avg}, step=global_step)
 
-        # Validation evaluation at each epoch boundary
-        run_val_eval(
-            val_prompts, ctx, step=global_step, epoch=epoch + 1,
-            run_dir=config.run_dir, use_system_prompt=config.use_system_prompt,
-        )
-        run_benchmark_evals(
-            config.benchmark_evals, ctx, step=global_step, epoch=epoch + 1,
-            total_epochs=n_epochs, run_dir=config.run_dir,
-            use_system_prompt=config.use_system_prompt,
-        )
+        if config.eval_trigger == "epoch" and should_run_training_eval(
+            trigger=config.eval_trigger,
+            frequency=config.eval_frequency,
+            step=global_step,
+            epoch=epoch + 1,
+            total_steps=n_batches * n_epochs,
+            total_epochs=n_epochs,
+        ):
+            run_val_eval(
+                val_prompts,
+                ctx,
+                step=global_step,
+                epoch=epoch + 1,
+                run_dir=config.run_dir,
+                use_system_prompt=config.use_system_prompt,
+                eval_trigger=config.eval_trigger,
+                diagnostic_num_examples=config.eval_diagnostic_num_examples,
+                diagnostic_example_ids=config.eval_diagnostic_example_ids,
+            )
+            run_train_panel_eval(
+                train_eval_prompts,
+                ctx,
+                step=global_step,
+                epoch=epoch + 1,
+                run_dir=config.run_dir,
+                use_system_prompt=config.use_system_prompt,
+                eval_trigger=config.eval_trigger,
+                diagnostic_num_examples=config.train_diagnostic_num_examples,
+                diagnostic_example_ids=config.train_diagnostic_example_ids,
+            )
+            run_benchmark_evals(
+                config.benchmark_evals,
+                ctx,
+                step=global_step,
+                epoch=epoch + 1,
+                total_epochs=n_epochs,
+                run_dir=config.run_dir,
+                use_system_prompt=config.use_system_prompt,
+                eval_trigger=config.eval_trigger,
+            )
 
     return global_step

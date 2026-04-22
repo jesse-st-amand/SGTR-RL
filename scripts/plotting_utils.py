@@ -49,6 +49,15 @@ _DEFAULTS = {
 }
 
 
+def _data_train_files(config: dict) -> list[str]:
+    data_cfg = config.get("data", {})
+    train_files = data_cfg.get("train_files") or []
+    if train_files:
+        return list(train_files)
+    train_file = data_cfg.get("train_file", "")
+    return [train_file] if train_file else []
+
+
 def _infer_format_label(config: dict) -> str:
     """Infer whether the run used pairwise or individual SGTR data."""
     data_cfg = config.get("data", {})
@@ -64,7 +73,8 @@ def _infer_format_label(config: dict) -> str:
     if match:
         return {"pw": "pairwise", "ind": "individual"}[match.group(1)]
 
-    train_file = str(data_cfg.get("train_file", "")).upper()
+    train_files = _data_train_files(config)
+    train_file = str(train_files[0] if train_files else "").upper()
     if "_PW" in train_file:
         return "pairwise"
     if "_IND" in train_file:
@@ -167,10 +177,13 @@ def generate_summary_plot(run_dir: str | Path) -> Path:
         hp = config.get("hyperparameters", {})
         bs = hp.get("batch_size", 16)
         # Try to count training samples from train file
-        train_file = config.get("data", {}).get("train_file", "")
-        if train_file and Path(train_file).exists():
-            with open(train_file) as f:
-                n_train = sum(1 for _ in f)
+        train_files = _data_train_files(config)
+        existing_train_files = [Path(path) for path in train_files if Path(path).exists()]
+        if existing_train_files:
+            n_train = 0
+            for train_file in existing_train_files:
+                with open(train_file) as f:
+                    n_train += sum(1 for _ in f)
             batches_per_epoch = n_train // bs
         else:
             batches_per_epoch = 10  # fallback

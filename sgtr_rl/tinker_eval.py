@@ -17,7 +17,22 @@ from sgtr_rl.benchmarks import (
     subsample,
 )
 from sgtr_rl.data import build_conversation
-from sgtr_rl.metrics import log_val_metrics, log_val_result, save_val_predictions
+from sgtr_rl.eval_diagnostics import (
+    build_prompt_preview,
+    select_binary_diagnostic_items,
+    summarize_binary_margin_rows,
+)
+from sgtr_rl.metrics import (
+    log_binary_eval_result,
+    log_split_metrics,
+    log_val_metrics,
+    log_val_result,
+    make_eval_artifact_name,
+    save_split_diagnostics,
+    save_split_predictions,
+    save_val_diagnostics,
+    save_val_predictions,
+)
 from sgtr_rl.tinker import TinkerContext
 
 logger = logging.getLogger(__name__)
@@ -54,16 +69,97 @@ def _collect_completions(
     return completions
 
 
+def _binary_choice_token_ids(tokenizer: Any) -> tuple[int, int]:
+    token_1 = tokenizer.encode("1", add_special_tokens=False)
+    token_2 = tokenizer.encode("2", add_special_tokens=False)
+    if len(token_1) != 1 or len(token_2) != 1:
+        raise ValueError("Expected '1' and '2' to encode to single tokens")
+    return token_1[0], token_2[0]
+
+
+def compute_binary_margin_diagnostics(
+    items: list[dict],
+    *,
+    sampling_client: Any,
+    renderer: Any,
+    tokenizer: Any,
+    eval_params: Any,
+    use_system_prompt: bool = False,
+) -> dict:
+    """Measure log p(1) - log p(2) on a fixed panel of examples."""
+    import tinker
+
+    token_1, token_2 = _binary_choice_token_ids(tokenizer)
+    scoring_params = tinker.types.SamplingParams(
+        max_tokens=1,
+        stop=eval_params.stop,
+        temperature=0.0,
+    )
+
+    pending: list[tuple[dict, Any, Any]] = []
+    for item in items:
+        convo = build_conversation(item, use_system_prompt)
+        model_input = renderer.build_generation_prompt(convo)
+        prompt_1 = model_input.append(tinker.types.EncodedTextChunk(tokens=[token_1]))
+        prompt_2 = model_input.append(tinker.types.EncodedTextChunk(tokens=[token_2]))
+        pending.append(
+            (
+                item,
+                sampling_client.sample(
+                    prompt=prompt_1,
+                    num_samples=1,
+                    sampling_params=scoring_params,
+                    include_prompt_logprobs=True,
+                ),
+                sampling_client.sample(
+                    prompt=prompt_2,
+                    num_samples=1,
+                    sampling_params=scoring_params,
+                    include_prompt_logprobs=True,
+                ),
+            )
+        )
+
+    rows = []
+    for item, future_1, future_2 in pending:
+        result_1 = future_1.result()
+        result_2 = future_2.result()
+        prompt_logprobs_1 = result_1.prompt_logprobs or []
+        prompt_logprobs_2 = result_2.prompt_logprobs or []
+        logprob_1 = prompt_logprobs_1[-1] if prompt_logprobs_1 else None
+        logprob_2 = prompt_logprobs_2[-1] if prompt_logprobs_2 else None
+        if logprob_1 is None or logprob_2 is None:
+            continue
+
+        margin = float(logprob_1 - logprob_2)
+        predicted_by_margin = "1" if margin >= 0 else "2"
+        rows.append(
+            {
+                "id": item.get("id", ""),
+                "target": item["target"],
+                "predicted_by_margin": predicted_by_margin,
+                "correct_by_margin": predicted_by_margin == item["target"],
+                "logprob_1": float(logprob_1),
+                "logprob_2": float(logprob_2),
+                "margin_1_minus_2": margin,
+                "prompt_preview": build_prompt_preview(item),
+            }
+        )
+
+    return {
+        "examples": rows,
+        "summary": summarize_binary_margin_rows(rows),
+    }
+
+
 def compute_val_nll(
     val_prompts: list[dict], ctx: TinkerContext,
     use_system_prompt: bool = False,
 ) -> float:
     """Compute mean NLL on validation set via forward pass.
 
-    Builds SFT-style datums, runs forward_backward to get loss, then clears
-    accumulated gradients with a zero-lr optimizer step.
+    Builds SFT-style datums and runs a forward-only loss computation.
     """
-    from tinker import types
     from tinker_cookbook.renderers import TrainOnWhat
     from tinker_cookbook.supervised.common import compute_mean_nll
     from tinker_cookbook.supervised.data import conversation_to_datum
@@ -77,17 +173,11 @@ def compute_val_nll(
         )
         datums.append(datum)
 
-    fwd_bwd_result = ctx.training_client.forward_backward(
+    forward_result = ctx.training_client.forward(
         datums, loss_fn="cross_entropy"
     ).result()
 
-    # Clear accumulated gradients without changing weights
-    zero_adam = types.AdamParams(
-        learning_rate=0.0, beta1=0.9, beta2=0.95, eps=1e-8
-    )
-    ctx.training_client.optim_step(zero_adam).result()
-
-    logprobs = [x["logprobs"] for x in fwd_bwd_result.loss_fn_outputs]
+    logprobs = [x["logprobs"] for x in forward_result.loss_fn_outputs]
     weights = [d.loss_fn_inputs["weights"] for d in datums]
     return compute_mean_nll(logprobs, weights)
 
@@ -250,14 +340,25 @@ def evaluate_sgtr_benchmark(
 
 
 def _save_benchmark_predictions(
-    result: dict, cfg, epoch: int, run_dir: str, extra_fields: dict,
+    result: dict,
+    cfg,
+    *,
+    epoch: int,
+    step: int,
+    eval_trigger: str,
+    run_dir: str,
+    extra_fields: dict,
 ) -> None:
     """Save benchmark predictions to JSON."""
     pred_dir = Path(run_dir) / "benchmark_predictions" / cfg.name
     pred_dir.mkdir(parents=True, exist_ok=True)
-    pred_path = pred_dir / f"epoch_{epoch}.json"
+    pred_path = pred_dir / (
+        f"{make_eval_artifact_name(epoch=epoch, step=step, eval_trigger=eval_trigger)}.json"
+    )
     payload = {
         "epoch": epoch,
+        "step": step,
+        "eval_trigger": eval_trigger,
         "name": cfg.name,
         "type": cfg.type,
         **extra_fields,
@@ -300,6 +401,9 @@ def run_val_eval(
     epoch: int,
     run_dir: str | None = None,
     use_system_prompt: bool = False,
+    eval_trigger: str = "epoch",
+    diagnostic_num_examples: int = 0,
+    diagnostic_example_ids: list[str] | None = None,
 ) -> dict | None:
     """Run full validation: accuracy, NLL, logging, and prediction saving."""
     if not val_prompts:
@@ -313,8 +417,137 @@ def run_val_eval(
     log_val_result(val_result)
     log_val_metrics(ctx.ml_logger, val_result, step=step)
     if run_dir:
-        save_val_predictions(val_result, run_dir, epoch)
+        save_val_predictions(
+            val_result,
+            run_dir,
+            epoch=epoch,
+            step=step,
+            eval_trigger=eval_trigger,
+        )
+        diagnostic_items = select_binary_diagnostic_items(
+            val_prompts,
+            num_examples=diagnostic_num_examples,
+            example_ids=diagnostic_example_ids,
+        )
+        if diagnostic_items:
+            diagnostic_payload = compute_binary_margin_diagnostics(
+                diagnostic_items,
+                sampling_client=val_sampling,
+                renderer=ctx.renderer,
+                tokenizer=ctx.tokenizer,
+                eval_params=ctx.eval_params,
+                use_system_prompt=use_system_prompt,
+            )
+            diagnostic_payload.update(
+                {
+                    "epoch": epoch,
+                    "step": step,
+                    "eval_trigger": eval_trigger,
+                }
+            )
+            save_val_diagnostics(
+                diagnostic_payload,
+                run_dir,
+                epoch=epoch,
+                step=step,
+                eval_trigger=eval_trigger,
+            )
+            summary = diagnostic_payload["summary"]
+            ctx.ml_logger.log_metrics(
+                {
+                    "val_diag/accuracy": float(summary["accuracy"]),
+                    "val_diag/mean_margin_1_minus_2": float(
+                        summary["mean_margin_1_minus_2"]
+                    ),
+                    "val_diag/predicted_1_pct": (
+                        float(summary["predicted_1_count"])
+                        / max(int(summary["num_examples"]), 1)
+                    ),
+                },
+                step=step,
+            )
     return val_result
+
+
+def run_train_panel_eval(
+    train_prompts: list[dict],
+    ctx: TinkerContext,
+    step: int,
+    epoch: int,
+    run_dir: str | None = None,
+    use_system_prompt: bool = False,
+    eval_trigger: str = "epoch",
+    diagnostic_num_examples: int = 0,
+    diagnostic_example_ids: list[str] | None = None,
+) -> dict | None:
+    """Run a fixed train-panel eval to compare with raw batch train loss."""
+    diagnostic_items = select_binary_diagnostic_items(
+        train_prompts,
+        num_examples=diagnostic_num_examples,
+        example_ids=diagnostic_example_ids,
+    )
+    if not diagnostic_items:
+        return None
+
+    train_sampling = ctx.training_client.save_weights_and_get_sampling_client()
+    train_result = evaluate_val(
+        diagnostic_items,
+        train_sampling,
+        ctx.renderer,
+        ctx.eval_params,
+        use_system_prompt,
+    )
+    train_result["nll"] = compute_val_nll(diagnostic_items, ctx, use_system_prompt)
+    log_binary_eval_result("train_panel", train_result)
+    log_split_metrics(ctx.ml_logger, train_result, step=step, prefix="train_panel")
+
+    if run_dir:
+        save_split_predictions(
+            train_result,
+            run_dir,
+            split_name="train_panel",
+            epoch=epoch,
+            step=step,
+            eval_trigger=eval_trigger,
+        )
+        diagnostic_payload = compute_binary_margin_diagnostics(
+            diagnostic_items,
+            sampling_client=train_sampling,
+            renderer=ctx.renderer,
+            tokenizer=ctx.tokenizer,
+            eval_params=ctx.eval_params,
+            use_system_prompt=use_system_prompt,
+        )
+        diagnostic_payload.update(
+            {
+                "epoch": epoch,
+                "step": step,
+                "eval_trigger": eval_trigger,
+            }
+        )
+        save_split_diagnostics(
+            diagnostic_payload,
+            run_dir,
+            split_name="train_panel",
+            epoch=epoch,
+            step=step,
+            eval_trigger=eval_trigger,
+        )
+        summary = diagnostic_payload["summary"]
+        ctx.ml_logger.log_metrics(
+            {
+                "train_panel_diag/accuracy": float(summary["accuracy"]),
+                "train_panel_diag/mean_margin_1_minus_2": float(
+                    summary["mean_margin_1_minus_2"]
+                ),
+                "train_panel_diag/predicted_1_pct": (
+                    float(summary["predicted_1_count"])
+                    / max(int(summary["num_examples"]), 1)
+                ),
+            },
+            step=step,
+        )
+    return train_result
 
 
 def run_benchmark_evals(
@@ -323,26 +556,61 @@ def run_benchmark_evals(
     step: int,
     epoch: int,
     total_epochs: int,
+    schedule_index: int | None = None,
+    schedule_total: int | None = None,
     run_dir: str | None = None,
     use_system_prompt: bool = False,
+    eval_trigger: str = "epoch",
 ) -> None:
     """Run all configured benchmark evals that are due this epoch."""
     if not configs:
         return
 
+    current_index = schedule_index if schedule_index is not None else epoch
+    total_index = schedule_total if schedule_total is not None else total_epochs
     due = [
         cfg for cfg in configs
-        if should_run_benchmark(cfg.schedule, cfg.frequency, epoch, total_epochs)
+        if should_run_benchmark(cfg.schedule, cfg.frequency, current_index, total_index)
     ]
     if not due:
         return
 
     sampling_client = ctx.training_client.save_weights_and_get_sampling_client()
+    run_benchmark_configs(
+        due,
+        sampling_client=sampling_client,
+        renderer=ctx.renderer,
+        eval_params=ctx.eval_params,
+        ml_logger=ctx.ml_logger,
+        step=step,
+        epoch=epoch,
+        run_dir=run_dir,
+        use_system_prompt=use_system_prompt,
+        eval_trigger=eval_trigger,
+    )
+
+
+def run_benchmark_configs(
+    configs,
+    *,
+    sampling_client: Any,
+    renderer: Any,
+    eval_params: Any,
+    ml_logger: Any,
+    step: int,
+    epoch: int,
+    run_dir: str | None = None,
+    use_system_prompt: bool = False,
+    eval_trigger: str = "epoch",
+) -> None:
+    """Run a concrete list of benchmark configs immediately."""
+    if not configs:
+        return
 
     # Accumulate all metrics and log once to avoid W&B step-overwrite issue
     all_metrics: dict[str, float] = {}
 
-    for cfg in due:
+    for cfg in configs:
         logger.info(
             f"Running benchmark eval: {cfg.name} (type={cfg.type}, epoch={epoch})"
         )
@@ -352,7 +620,7 @@ def run_benchmark_evals(
 
         if cfg.type == "sgtr":
             result = evaluate_sgtr_benchmark(
-                data, sampling_client, ctx.renderer, ctx.eval_params,
+                data, sampling_client, renderer, eval_params,
                 use_system_prompt=use_system_prompt,
             )
             extra = {}
@@ -361,13 +629,13 @@ def run_benchmark_evals(
                 from tinker import types
                 mmlu_params = types.SamplingParams(
                     max_tokens=128,
-                    stop=ctx.eval_params.stop,
-                    temperature=ctx.eval_params.temperature,
+                    stop=eval_params.stop,
+                    temperature=eval_params.temperature,
                 )
             else:
-                mmlu_params = ctx.eval_params
+                mmlu_params = eval_params
             result = evaluate_benchmark(
-                data, sampling_client, ctx.renderer, mmlu_params, cot=cfg.cot,
+                data, sampling_client, renderer, mmlu_params, cot=cfg.cot,
             )
             extra = {"cot": cfg.cot}
 
@@ -375,7 +643,15 @@ def run_benchmark_evals(
         all_metrics.update(_answer_pct_metrics(cfg.name, result))
 
         if run_dir:
-            _save_benchmark_predictions(result, cfg, epoch, run_dir, extra)
+            _save_benchmark_predictions(
+                result,
+                cfg,
+                epoch=epoch,
+                step=step,
+                eval_trigger=eval_trigger,
+                run_dir=run_dir,
+                extra_fields=extra,
+            )
 
     if all_metrics:
-        ctx.ml_logger.log_metrics(all_metrics, step=step)
+        ml_logger.log_metrics(all_metrics, step=step)

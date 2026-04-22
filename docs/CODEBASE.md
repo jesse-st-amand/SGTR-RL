@@ -86,6 +86,7 @@ SGTR-RL/
 | `runpod_utils.py` | Internal RunPod request/startup-script builder | Imported by `scripts.runpod_launch` |
 | `prepare_data.py` | Download from HuggingFace + extract training data | `python -m scripts.prepare_data --evaluator ll-3.1-8b` |
 | `prepare_mmlu.py` | Download MMLU and prepare benchmark JSONL | `python -m scripts.prepare_mmlu` |
+| `run_sanity_sweeps.py` | Launch small train-size / label-randomization sanity sweeps from a single base config | `python -m scripts.run_sanity_sweeps --dry-run` |
 | `plot_cross_evals.py` | Plot cross-eval results across experiments | `python -m scripts.plot_cross_evals` |
 | `plotting_utils.py` | Shared helpers for training summary plots | Imported by `scripts.train` |
 | `plot_summary.py` | Plot per-run SFT summaries for selected experiment outputs | `python -m scripts.plot_summary` |
@@ -171,6 +172,20 @@ def run_training(config, runtime):
 3. At each epoch boundary: run greedy eval on validation set + compute val NLL
 
 Key insight: GRPO needs **within-group variance** to learn. If all rollouts for a prompt give the same answer, that group provides zero gradient signal.
+
+### Handy Sweep Knobs
+
+For sanity checks and controls, experiment YAMLs and `scripts.train` now support a few train-data transforms:
+
+- `data.max_train_ids`: sample a deterministic subset of unique training IDs before training
+- `data.subset_seed`: separate seed for that ID-level subset
+- `data.randomize_train_labels`: flip binary labels by training ID as a control
+- `data.randomize_train_labels_seed`: separate seed for label randomization
+- `hyperparameters.max_steps`: optional early stop after a fixed number of optimizer steps
+- `evaluation.trigger`: run evals on `epoch` boundaries or by optimizer `step`
+- `evaluation.frequency`: run evals every N epochs or N steps, always including the final point
+
+These are intended for quick size sweeps and negative controls without cloning lots of YAML configs.
 
 ## Experiments
 

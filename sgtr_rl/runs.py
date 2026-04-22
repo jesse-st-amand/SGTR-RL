@@ -11,13 +11,32 @@ from sgtr_rl.config import TrainingConfig
 BASE_DIR = Path("results")
 
 TRACKED_FIELDS = [
-    "learning_rate",
-    "num_epochs",
-    "batch_size",
-    "num_rollouts_per_prompt",
-    "max_completion_length",
-    "lora_rank",
-    "seed",
+    {"name": "learning_rate", "section": "hyperparameters", "short": "lr"},
+    {"name": "num_epochs", "section": "hyperparameters", "short": "epochs"},
+    {"name": "batch_size", "section": "hyperparameters", "short": "bs"},
+    {"name": "max_steps", "section": "hyperparameters", "short": "steps"},
+    {
+        "name": "num_rollouts_per_prompt",
+        "section": "hyperparameters",
+        "short": "rollouts",
+    },
+    {"name": "max_completion_length", "section": "hyperparameters", "short": "max_len"},
+    {"name": "lora_rank", "section": "model", "short": "rank"},
+    {"name": "seed", "section": "hyperparameters", "short": "seed"},
+    {"name": "max_train_ids", "section": "data", "short": "train_ids"},
+    {"name": "subset_seed", "section": "data", "short": "subset_seed"},
+    {
+        "name": "randomize_train_labels",
+        "section": "data",
+        "short": "rand_labels",
+    },
+    {
+        "name": "randomize_train_labels_seed",
+        "section": "data",
+        "short": "label_seed",
+    },
+    {"name": "eval_trigger", "section": "evaluation", "short": "eval"},
+    {"name": "eval_frequency", "section": "evaluation", "short": "eval_freq"},
 ]
 
 
@@ -45,35 +64,16 @@ def compute_overrides(config: TrainingConfig, yaml_path: str | Path) -> str:
     with open(yaml_path) as f:
         raw = yaml.safe_load(f)
 
-    hp = raw.get("hyperparameters", {})
-    model_cfg = raw.get("model", {})
-
-    yaml_values = {
-        "learning_rate": hp.get("learning_rate"),
-        "num_epochs": hp.get("num_epochs"),
-        "batch_size": hp.get("batch_size"),
-        "num_rollouts_per_prompt": hp.get("num_rollouts_per_prompt"),
-        "max_completion_length": hp.get("max_completion_length"),
-        "lora_rank": model_cfg.get("lora_rank"),
-        "seed": hp.get("seed"),
-    }
-
-    short_names = {
-        "learning_rate": "lr",
-        "num_epochs": "epochs",
-        "batch_size": "bs",
-        "num_rollouts_per_prompt": "rollouts",
-        "max_completion_length": "max_len",
-        "lora_rank": "rank",
-        "seed": "seed",
-    }
+    defaults = TrainingConfig()
 
     parts = []
-    for field_name in TRACKED_FIELDS:
-        yaml_val = yaml_values.get(field_name)
+    for spec in TRACKED_FIELDS:
+        field_name = spec["name"]
+        section = spec["section"]
+        yaml_val = raw.get(section, {}).get(field_name, getattr(defaults, field_name))
         config_val = getattr(config, field_name, None)
-        if yaml_val is not None and config_val != yaml_val:
-            parts.append(f"{short_names[field_name]}={config_val}")
+        if config_val != yaml_val:
+            parts.append(f"{spec['short']}={config_val}")
 
     return ",".join(parts)
 
@@ -107,7 +107,7 @@ def create_run_dir(
     run_dir = base / run_name
 
     if exists != "new":
-        existing = _find_existing_run(base, config.experiment_name)
+        existing = _find_existing_run(base, config.experiment_name, overrides_str)
         if existing:
             if exists == "error":
                 raise FileExistsError(
@@ -117,6 +117,7 @@ def create_run_dir(
                 )
             elif exists == "skip":
                 config.run_dir = str(existing)
+                config.skipped_existing_run = True
                 return existing
             elif exists == "overwrite":
                 shutil.rmtree(existing)
@@ -128,30 +129,36 @@ def create_run_dir(
     if yaml_path.exists():
         with open(yaml_path) as f:
             raw_config = yaml.safe_load(f)
-        for field_name in TRACKED_FIELDS:
+        for spec in TRACKED_FIELDS:
+            field_name = spec["name"]
+            section = spec["section"]
             config_val = getattr(config, field_name, None)
-            if field_name in ("lora_rank",):
-                raw_config.setdefault("model", {})[field_name] = config_val
-            else:
-                raw_config.setdefault("hyperparameters", {})[field_name] = config_val
+            raw_config.setdefault(section, {})[field_name] = config_val
         with open(run_dir / "config.yaml", "w") as f:
             yaml.dump(raw_config, f, default_flow_style=False, sort_keys=False)
 
-    train_file = Path(config.train_file)
-    meta_path = train_file.parent / "metadata.json"
-    if meta_path.exists():
-        shutil.copy2(meta_path, run_dir / "metadata.json")
+    _write_run_metadata(config, run_dir)
 
     config.run_dir = str(run_dir)
+    config.skipped_existing_run = False
     return run_dir
 
 
-def _find_existing_run(base: Path, experiment_name: str) -> Path | None:
-    """Find an existing run directory matching the experiment name."""
+def _find_existing_run(base: Path, experiment_name: str, overrides_str: str = "") -> Path | None:
+    """Find an existing run directory matching the experiment name and overrides."""
     if not base.exists():
         return None
     for child in base.iterdir():
-        if child.is_dir() and child.name.startswith(experiment_name + "__"):
+        if not child.is_dir():
+            continue
+        parts = child.name.split("__")
+        if not parts or parts[0] != experiment_name:
+            continue
+        if overrides_str:
+            if len(parts) >= 3 and parts[1] == overrides_str:
+                return child
+            continue
+        if len(parts) == 2:
             return child
     return None
 
@@ -165,3 +172,34 @@ def list_runs(base_dir: str = "results", group: str | None = None) -> list[Path]
         return []
     runs = [p for p in base.iterdir() if p.is_dir()]
     return sorted(runs, key=lambda p: p.name)
+
+
+def _write_run_metadata(config: TrainingConfig, run_dir: Path) -> None:
+    """Copy or synthesize metadata.json for the run directory."""
+    train_files = config.train_files or ([config.train_file] if config.train_file else [])
+    if not train_files:
+        return
+
+    metadata_entries = []
+    for train_file in train_files:
+        meta_path = Path(train_file).parent / "metadata.json"
+        if not meta_path.exists():
+            continue
+        with open(meta_path) as f:
+            metadata_entries.append(yaml.safe_load(f) or {})
+
+    if not metadata_entries:
+        return
+
+    output_path = run_dir / "metadata.json"
+    if len(metadata_entries) == 1:
+        shutil.copy2(Path(train_files[0]).parent / "metadata.json", output_path)
+        return
+
+    combined = {
+        "combined_sources": True,
+        "train_files": train_files,
+        "source_metadata": metadata_entries,
+    }
+    with open(output_path, "w") as f:
+        yaml.safe_dump(combined, f, sort_keys=False)

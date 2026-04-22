@@ -46,6 +46,26 @@ class TestSFTEvalSchedule:
                 for c in mock_bench.call_args_list:
                     assert c.kwargs["total_epochs"] == n_epochs
 
+    def test_sft_step_eval_schedule(self, sft_config, tiny_prompts):
+        """Step-triggered eval runs on the configured optimizer-step cadence."""
+        prompts, val_prompts = tiny_prompts
+        sft_config.eval_trigger = "step"
+        sft_config.eval_frequency = 2
+        with patch_tinker_modules() as mocks:
+            ctx = _build_ctx(mocks)
+            with patch("sgtr_rl.sft.run_val_eval") as mock_val, \
+                 patch("sgtr_rl.sft.run_benchmark_evals") as mock_bench:
+                from sgtr_rl.sft import train_sft
+
+                train_sft(sft_config, ctx, prompts, val_prompts)
+
+                assert mock_val.call_count == 2
+                assert [c.kwargs["step"] for c in mock_val.call_args_list] == [2, 4]
+                assert mock_bench.call_count == 2
+                for c in mock_bench.call_args_list:
+                    assert c.kwargs["schedule_total"] == 4
+                    assert c.kwargs["eval_trigger"] == "step"
+
 
 class TestSFTTrainingSteps:
     """SFT training step count tests."""
@@ -131,6 +151,26 @@ class TestGRPOEvalSchedule:
 
                 for c in mock_bench.call_args_list:
                     assert c.kwargs["total_epochs"] == n_epochs
+
+    def test_grpo_step_eval_schedule(self, grpo_config, tiny_prompts):
+        """Step-triggered eval also works for GRPO."""
+        prompts, val_prompts = tiny_prompts
+        grpo_config.eval_trigger = "step"
+        grpo_config.eval_frequency = 2
+        with patch_tinker_modules(num_sequences=2) as mocks:
+            ctx = _build_ctx(mocks)
+            with patch("sgtr_rl.grpo.run_val_eval") as mock_val, \
+                 patch("sgtr_rl.grpo.run_benchmark_evals") as mock_bench:
+                from sgtr_rl.grpo import train_grpo
+
+                train_grpo(grpo_config, ctx, prompts, val_prompts)
+
+                assert mock_val.call_count == 2
+                assert [c.kwargs["step"] for c in mock_val.call_args_list] == [2, 4]
+                assert mock_bench.call_count == 2
+                for c in mock_bench.call_args_list:
+                    assert c.kwargs["schedule_total"] == 4
+                    assert c.kwargs["eval_trigger"] == "step"
 
 
 class TestGRPOTrainingSteps:

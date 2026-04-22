@@ -1,0 +1,70 @@
+experiment_name: "03_sft_pw_vs_multi_model_holdout_ll_3_1_70b"
+description: "SFT on PW recognition vs multiple other models (Qwen, Haiku-3.5, GPT-4o, Opus-4.1), choosing one source opponent per underlying train ID, with Llama-3.1-70B held out for cross-model evaluation."
+
+algorithm: sft
+wandb_project: sgtr-rl
+
+data:
+  generator_models: [qwen-2.5-7b, haiku-3.5, gpt-4o, opus-4.1]
+  dataset: sharegpt
+  train_files:
+    - data/training_data/ll-3.1-8b_ICML_01_UT_PW-Q_Rec_NPr_FA_Inst_vs_qwen-2.5-7b_sharegpt/train.jsonl
+    - data/training_data/ll-3.1-8b_ICML_01_UT_PW-Q_Rec_NPr_FA_Inst_vs_haiku-3.5_sharegpt/train.jsonl
+    - data/training_data/ll-3.1-8b_ICML_01_UT_PW-Q_Rec_NPr_FA_Inst_vs_gpt-4o_sharegpt/train.jsonl
+    - data/training_data/ll-3.1-8b_ICML_01_UT_PW-Q_Rec_NPr_FA_Inst_vs_opus-4.1_sharegpt/train.jsonl
+  train_mix_strategy: per_id_one_source
+  val_files:
+    - data/training_data/ll-3.1-8b_ICML_01_UT_PW-Q_Rec_NPr_FA_Inst_vs_qwen-2.5-7b_sharegpt/val.jsonl
+    - data/training_data/ll-3.1-8b_ICML_01_UT_PW-Q_Rec_NPr_FA_Inst_vs_haiku-3.5_sharegpt/val.jsonl
+    - data/training_data/ll-3.1-8b_ICML_01_UT_PW-Q_Rec_NPr_FA_Inst_vs_gpt-4o_sharegpt/val.jsonl
+    - data/training_data/ll-3.1-8b_ICML_01_UT_PW-Q_Rec_NPr_FA_Inst_vs_opus-4.1_sharegpt/val.jsonl
+
+model:
+  name: meta-llama/Llama-3.1-8B-Instruct
+  lora_rank: 32
+
+hyperparameters:
+  learning_rate: 5.0e-5
+  num_epochs: 20
+  batch_size: 16
+  seed: 42
+
+benchmark_evals:
+  mmlu_20:
+    type: mmlu
+    data_file: data/benchmarks/mmlu.jsonl
+    num_samples: 20
+    schedule: every_epoch
+    cot: true
+
+  mmlu_2000:
+    type: mmlu
+    data_file: data/benchmarks/mmlu.jsonl
+    num_samples: 2000
+    schedule: end_only
+    cot: true
+
+  xeval_holdout_vs_ll_3_1_70b_sharegpt:
+    type: sgtr
+    data_file: data/training_data/ll-3.1-8b_ICML_01_UT_PW-Q_Rec_NPr_FA_Inst_vs_ll-3.1-70b_sharegpt/val.jsonl
+    schedule: every_epoch
+
+  xeval_vs_qwen_2_5_7b_sharegpt:
+    type: sgtr
+    data_file: data/training_data/ll-3.1-8b_ICML_01_UT_PW-Q_Rec_NPr_FA_Inst_vs_qwen-2.5-7b_sharegpt/val.jsonl
+    schedule: end_only
+
+  xeval_vs_haiku_3_5_sharegpt:
+    type: sgtr
+    data_file: data/training_data/ll-3.1-8b_ICML_01_UT_PW-Q_Rec_NPr_FA_Inst_vs_haiku-3.5_sharegpt/val.jsonl
+    schedule: end_only
+
+  xeval_vs_gpt_4o_sharegpt:
+    type: sgtr
+    data_file: data/training_data/ll-3.1-8b_ICML_01_UT_PW-Q_Rec_NPr_FA_Inst_vs_gpt-4o_sharegpt/val.jsonl
+    schedule: end_only
+
+  xeval_vs_opus_4_1_sharegpt:
+    type: sgtr
+    data_file: data/training_data/ll-3.1-8b_ICML_01_UT_PW-Q_Rec_NPr_FA_Inst_vs_opus-4.1_sharegpt/val.jsonl
+    schedule: end_only

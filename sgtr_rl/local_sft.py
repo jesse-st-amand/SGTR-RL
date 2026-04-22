@@ -11,14 +11,21 @@ from typing import Any
 
 import torch
 import torch.nn.functional as functional
-from peft import LoraConfig, TaskType, get_peft_model, prepare_model_for_kbit_training
+from peft import (
+    LoraConfig,
+    PeftModel,
+    TaskType,
+    get_peft_model,
+    prepare_model_for_kbit_training,
+)
 from torch.optim import AdamW
 from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
 
 from sgtr_rl.artifacts import JsonlMetricsLogger, atomic_write_json, update_run_status
+from sgtr_rl.benchmarks import should_run_training_eval
 from sgtr_rl.config import TrainingConfig
 from sgtr_rl.data import build_conversation
-from sgtr_rl.local_eval import run_benchmark_evals, run_val_eval
+from sgtr_rl.local_eval import run_benchmark_evals, run_train_panel_eval, run_val_eval
 from sgtr_rl.runtime_config import RuntimeConfig
 
 logger = logging.getLogger(__name__)
@@ -289,6 +296,137 @@ def save_local_checkpoint(
     logger.info("Saved final adapter checkpoint to %s", checkpoint_dir)
 
 
+def load_local_checkpoint_for_eval(
+    config: TrainingConfig,
+    runtime: RuntimeConfig,
+    *,
+    checkpoint_dir: str | Path,
+    eval_run_dir: str | Path,
+    wandb_project: str | None = None,
+) -> LocalTrainingContext:
+    """Load a saved local adapter checkpoint for posthoc evaluation."""
+    checkpoint_path = Path(checkpoint_dir)
+    device = _resolve_device(runtime)
+    dtype = _resolve_dtype(runtime, device)
+
+    tokenizer = AutoTokenizer.from_pretrained(
+        checkpoint_path,
+        cache_dir=runtime.local.cache_dir,
+    )
+    if tokenizer.pad_token is None:
+        tokenizer.pad_token = tokenizer.eos_token
+    tokenizer.padding_side = "right"
+
+    model_kwargs: dict[str, Any] = {
+        "cache_dir": runtime.local.cache_dir,
+        "torch_dtype": dtype,
+    }
+    if runtime.local.attention_implementation:
+        model_kwargs["attn_implementation"] = runtime.local.attention_implementation
+    if runtime.local.load_in_4bit:
+        if device.type != "cuda":
+            raise ValueError("4-bit loading requires CUDA")
+        model_kwargs["quantization_config"] = BitsAndBytesConfig(
+            load_in_4bit=True,
+            bnb_4bit_compute_dtype=dtype,
+            bnb_4bit_quant_type="nf4",
+            bnb_4bit_use_double_quant=True,
+        )
+        model_kwargs["device_map"] = "auto"
+
+    base_model = AutoModelForCausalLM.from_pretrained(config.model_name, **model_kwargs)
+    if not runtime.local.load_in_4bit:
+        base_model.to(device)
+    model = PeftModel.from_pretrained(base_model, checkpoint_path)
+    model.eval()
+
+    metrics_logger = JsonlMetricsLogger(
+        run_dir=eval_run_dir,
+        experiment_name=f"{config.experiment_name}_checkpoint_eval",
+        config_payload={
+            "training": config.model_dump(mode="json"),
+            "runtime": runtime.model_dump(mode="json"),
+            "checkpoint_dir": str(checkpoint_path),
+        },
+        wandb_project=wandb_project,
+    )
+
+    return LocalTrainingContext(
+        config=config,
+        model=model,
+        tokenizer=tokenizer,
+        optimizer=None,
+        device=device,
+        dtype=dtype,
+        runtime=runtime,
+        metrics_logger=metrics_logger,
+    )
+
+
+def load_local_base_model_for_eval(
+    config: TrainingConfig,
+    runtime: RuntimeConfig,
+    *,
+    eval_run_dir: str | Path,
+    wandb_project: str | None = None,
+) -> LocalTrainingContext:
+    """Load the base local model without any adapter for posthoc evaluation."""
+    device = _resolve_device(runtime)
+    dtype = _resolve_dtype(runtime, device)
+
+    tokenizer = AutoTokenizer.from_pretrained(
+        config.model_name,
+        cache_dir=runtime.local.cache_dir,
+    )
+    if tokenizer.pad_token is None:
+        tokenizer.pad_token = tokenizer.eos_token
+    tokenizer.padding_side = "right"
+
+    model_kwargs: dict[str, Any] = {
+        "cache_dir": runtime.local.cache_dir,
+        "torch_dtype": dtype,
+    }
+    if runtime.local.attention_implementation:
+        model_kwargs["attn_implementation"] = runtime.local.attention_implementation
+    if runtime.local.load_in_4bit:
+        if device.type != "cuda":
+            raise ValueError("4-bit loading requires CUDA")
+        model_kwargs["quantization_config"] = BitsAndBytesConfig(
+            load_in_4bit=True,
+            bnb_4bit_compute_dtype=dtype,
+            bnb_4bit_quant_type="nf4",
+            bnb_4bit_use_double_quant=True,
+        )
+        model_kwargs["device_map"] = "auto"
+
+    model = AutoModelForCausalLM.from_pretrained(config.model_name, **model_kwargs)
+    if not runtime.local.load_in_4bit:
+        model.to(device)
+    model.eval()
+
+    metrics_logger = JsonlMetricsLogger(
+        run_dir=eval_run_dir,
+        experiment_name=f"{config.experiment_name}_base_model_eval",
+        config_payload={
+            "training": config.model_dump(mode="json"),
+            "runtime": runtime.model_dump(mode="json"),
+            "base_model_only": True,
+        },
+        wandb_project=wandb_project,
+    )
+
+    return LocalTrainingContext(
+        config=config,
+        model=model,
+        tokenizer=tokenizer,
+        optimizer=None,
+        device=device,
+        dtype=dtype,
+        runtime=runtime,
+        metrics_logger=metrics_logger,
+    )
+
+
 def train_local_sft(
     config: TrainingConfig,
     runtime: RuntimeConfig,
@@ -308,6 +446,20 @@ def train_local_sft(
             epoch=0,
             run_dir=config.run_dir,
             use_system_prompt=config.use_system_prompt,
+            eval_trigger=config.eval_trigger,
+            diagnostic_num_examples=config.eval_diagnostic_num_examples,
+            diagnostic_example_ids=config.eval_diagnostic_example_ids,
+        )
+        run_train_panel_eval(
+            prompts,
+            ctx,
+            step=0,
+            epoch=0,
+            run_dir=config.run_dir,
+            use_system_prompt=config.use_system_prompt,
+            eval_trigger=config.eval_trigger,
+            diagnostic_num_examples=config.train_diagnostic_num_examples,
+            diagnostic_example_ids=config.train_diagnostic_example_ids,
         )
         run_benchmark_evals(
             config.benchmark_evals,
@@ -317,6 +469,7 @@ def train_local_sft(
             total_epochs=config.num_epochs,
             run_dir=config.run_dir,
             use_system_prompt=config.use_system_prompt,
+            eval_trigger=config.eval_trigger,
         )
         update_run_status(
             config.run_dir,
@@ -329,14 +482,27 @@ def train_local_sft(
 
         batch_size = config.batch_size
         n_batches = len(prompts) // batch_size
+        max_steps = config.max_steps
+        if n_batches == 0:
+            raise ValueError(
+                f"Not enough training records ({len(prompts)}) for batch_size={batch_size}. "
+                "Reduce batch_size or increase train data."
+            )
+        total_steps = n_batches * config.num_epochs if max_steps is None else min(
+            n_batches * config.num_epochs,
+            max_steps,
+        )
         logger.info(
             "Local SFT: %s epochs, %s batches/epoch, batch_size=%s, total_steps=%s",
             config.num_epochs,
             n_batches,
             batch_size,
-            config.num_epochs * n_batches,
+            total_steps,
         )
 
+        completed_epochs = 0
+        stopped_early = False
+        train_eval_prompts = list(prompts)
         for epoch in range(config.num_epochs):
             current_epoch = epoch + 1
             random.shuffle(prompts)
@@ -393,24 +559,109 @@ def train_local_sft(
                     step=global_step,
                 )
 
-            logger.info("Epoch %s complete", current_epoch)
-            run_val_eval(
-                val_prompts,
-                ctx,
+                if config.eval_trigger == "step" and should_run_training_eval(
+                    trigger=config.eval_trigger,
+                    frequency=config.eval_frequency,
+                    step=global_step,
+                    epoch=current_epoch,
+                    total_steps=total_steps,
+                    total_epochs=config.num_epochs,
+                ):
+                    run_val_eval(
+                        val_prompts,
+                        ctx,
+                        step=global_step,
+                        epoch=current_epoch,
+                        run_dir=config.run_dir,
+                        use_system_prompt=config.use_system_prompt,
+                        eval_trigger=config.eval_trigger,
+                        diagnostic_num_examples=config.eval_diagnostic_num_examples,
+                        diagnostic_example_ids=config.eval_diagnostic_example_ids,
+                    )
+                    run_train_panel_eval(
+                        train_eval_prompts,
+                        ctx,
+                        step=global_step,
+                        epoch=current_epoch,
+                        run_dir=config.run_dir,
+                        use_system_prompt=config.use_system_prompt,
+                        eval_trigger=config.eval_trigger,
+                        diagnostic_num_examples=config.train_diagnostic_num_examples,
+                        diagnostic_example_ids=config.train_diagnostic_example_ids,
+                    )
+                    run_benchmark_evals(
+                        config.benchmark_evals,
+                        ctx,
+                        step=global_step,
+                        epoch=current_epoch,
+                        total_epochs=config.num_epochs,
+                        schedule_index=global_step,
+                        schedule_total=total_steps,
+                        run_dir=config.run_dir,
+                        use_system_prompt=config.use_system_prompt,
+                        eval_trigger=config.eval_trigger,
+                    )
+
+                if max_steps is not None and global_step >= max_steps:
+                    stopped_early = True
+                    logger.info(
+                        "Reached max_steps=%s at epoch %s batch %s/%s",
+                        max_steps,
+                        current_epoch,
+                        batch_idx + 1,
+                        n_batches,
+                    )
+                    break
+
+            completed_epochs = current_epoch
+            if stopped_early and batch_idx + 1 < n_batches:
+                logger.info(
+                    "Stopped during epoch %s after %s batches",
+                    current_epoch,
+                    batch_idx + 1,
+                )
+            else:
+                logger.info("Epoch %s complete", current_epoch)
+            if config.eval_trigger == "epoch" and should_run_training_eval(
+                trigger=config.eval_trigger,
+                frequency=config.eval_frequency,
                 step=global_step,
                 epoch=current_epoch,
-                run_dir=config.run_dir,
-                use_system_prompt=config.use_system_prompt,
-            )
-            run_benchmark_evals(
-                config.benchmark_evals,
-                ctx,
-                step=global_step,
-                epoch=current_epoch,
+                total_steps=total_steps,
                 total_epochs=config.num_epochs,
-                run_dir=config.run_dir,
-                use_system_prompt=config.use_system_prompt,
-            )
+            ):
+                run_val_eval(
+                    val_prompts,
+                    ctx,
+                    step=global_step,
+                    epoch=current_epoch,
+                    run_dir=config.run_dir,
+                    use_system_prompt=config.use_system_prompt,
+                    eval_trigger=config.eval_trigger,
+                    diagnostic_num_examples=config.eval_diagnostic_num_examples,
+                    diagnostic_example_ids=config.eval_diagnostic_example_ids,
+                )
+                run_train_panel_eval(
+                    train_eval_prompts,
+                    ctx,
+                    step=global_step,
+                    epoch=current_epoch,
+                    run_dir=config.run_dir,
+                    use_system_prompt=config.use_system_prompt,
+                    eval_trigger=config.eval_trigger,
+                    diagnostic_num_examples=config.train_diagnostic_num_examples,
+                    diagnostic_example_ids=config.train_diagnostic_example_ids,
+                )
+                run_benchmark_evals(
+                    config.benchmark_evals,
+                    ctx,
+                    step=global_step,
+                    epoch=current_epoch,
+                    total_epochs=completed_epochs if stopped_early else config.num_epochs,
+                    run_dir=config.run_dir,
+                    use_system_prompt=config.use_system_prompt,
+                    eval_trigger=config.eval_trigger,
+                )
             update_run_status(
                 config.run_dir,
                 "running",
@@ -420,7 +671,11 @@ def train_local_sft(
                 epoch=current_epoch,
             )
 
-        save_local_checkpoint(ctx, config, global_step=global_step, epoch=current_epoch)
+            if stopped_early:
+                break
+
+        config.completed_epochs = completed_epochs
+        save_local_checkpoint(ctx, config, global_step=global_step, epoch=completed_epochs)
         return global_step
     finally:
         ctx.metrics_logger.close()

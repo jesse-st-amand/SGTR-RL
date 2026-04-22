@@ -55,6 +55,15 @@ _MODEL_DISPLAY = {
 }
 
 
+def _config_train_files(config: dict) -> list[str]:
+    data = config.get("data", {})
+    train_files = data.get("train_files") or []
+    if train_files:
+        return list(train_files)
+    train_file = data.get("train_file", "")
+    return [train_file] if train_file else []
+
+
 def load_experiment_metrics(results_dir: Path) -> dict:
     """Load metrics from all experiment result directories.
 
@@ -135,9 +144,15 @@ def get_experiment_info(config: dict) -> dict:
     """Extract key info from experiment config."""
     data = config.get("data", {})
     generators = data.get("generator_models", [])
-    other_model = generators[0] if generators else "unknown"
+    if not generators:
+        other_model = "unknown"
+    elif len(generators) == 1:
+        other_model = generators[0]
+    else:
+        other_model = "multiple models"
     # Detect format from train file path
-    train_file = data.get("train_file", "")
+    train_files = _config_train_files(config)
+    train_file = train_files[0] if train_files else ""
     if "_pw/" in train_file or "_pw." in train_file:
         fmt = "PW"
     elif "_ind/" in train_file or "_ind." in train_file:
@@ -331,10 +346,12 @@ def plot_cross_eval_curves(experiments: dict, output_dir: Path):
         config = exp_data["config"]
         hp = config.get("hyperparameters", {})
         bs = hp.get("batch_size", hp.get("per_device_train_batch_size", 16))
-        train_file = config.get("data", {}).get("train_file", "")
-        if train_file and Path(train_file).exists():
-            with open(train_file) as f:
-                n_train = sum(1 for _ in f)
+        train_files = [Path(path) for path in _config_train_files(config) if Path(path).exists()]
+        if train_files:
+            n_train = 0
+            for train_file in train_files:
+                with open(train_file) as f:
+                    n_train += sum(1 for _ in f)
             bpe = n_train // bs
         else:
             bpe = 10
@@ -602,10 +619,12 @@ def plot_mmlu_summary(experiments: dict, output_dir: Path):
         config = ed["config"]
         hp = config.get("hyperparameters", {})
         bs = hp.get("batch_size", hp.get("per_device_train_batch_size", 16))
-        train_file = config.get("data", {}).get("train_file", "")
-        if train_file and Path(train_file).exists():
-            with open(train_file) as f:
-                n_train = sum(1 for _ in f)
+        train_files = [Path(path) for path in _config_train_files(config) if Path(path).exists()]
+        if train_files:
+            n_train = 0
+            for train_file in train_files:
+                with open(train_file) as f:
+                    n_train += sum(1 for _ in f)
             bpe = max(n_train // bs, 1)
         else:
             bpe = 10

@@ -61,6 +61,21 @@ class TestBuildTitle:
         assert "individual" in title
         assert "pairwise" not in title
 
+    def test_build_title_infers_format_from_train_files(self):
+        config = {
+            "experiment_name": "03_sft_multi",
+            "algorithm": "sft",
+            "model": {"name": "Qwen/Qwen2-1.5B"},
+            "data": {
+                "dataset": "sharegpt",
+                "train_files": [
+                    "data/training_data/ll-3.1-8b_ICML_01_UT_PW-Q_Rec_NPr_FA_Inst_vs_qwen-2.5-7b_sharegpt/train.jsonl"
+                ],
+            },
+        }
+        title = _build_title(config)
+        assert "pairwise" in title
+
 
 # _smooth
 

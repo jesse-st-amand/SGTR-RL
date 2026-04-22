@@ -95,13 +95,13 @@ def extract_mmlu_answer(text: str) -> str | None:
 
 
 def should_run_benchmark(schedule: str, frequency: int, epoch: int, total_epochs: int) -> bool:
-    """Check if a benchmark should run at this epoch.
+    """Check if a benchmark should run at this evaluation point.
 
     Args:
         schedule: "every_epoch", "every_N_epochs", or "end_only".
         frequency: For "every_N_epochs", the N value.
-        epoch: Current epoch (0 = baseline, 1 = after first epoch, etc.).
-        total_epochs: Total number of training epochs.
+        epoch: Current evaluation index (usually epoch, optionally step).
+        total_epochs: Total number of evaluation units.
     """
     is_final = epoch == total_epochs
 
@@ -117,3 +117,27 @@ def should_run_benchmark(schedule: str, frequency: int, epoch: int, total_epochs
     else:
         logger.warning(f"Unknown benchmark schedule: {schedule!r}")
         return False
+
+
+def should_run_training_eval(
+    *,
+    trigger: str,
+    frequency: int,
+    step: int,
+    epoch: int,
+    total_steps: int,
+    total_epochs: int,
+) -> bool:
+    """Check whether the global training eval stack should run now."""
+    if trigger == "step":
+        current = step
+        total = total_steps
+    elif trigger == "epoch":
+        current = epoch
+        total = total_epochs
+    else:
+        raise ValueError(f"Unknown evaluation trigger: {trigger!r}")
+
+    if current <= 0:
+        return False
+    return (current % frequency == 0) or (current == total)

@@ -5,10 +5,11 @@ import math
 import random
 import time
 
+from sgtr_rl.benchmarks import should_run_training_eval
 from sgtr_rl.config import TrainingConfig
 from sgtr_rl.data import build_conversation
 from sgtr_rl.tinker import TinkerContext
-from sgtr_rl.tinker_eval import run_benchmark_evals, run_val_eval
+from sgtr_rl.tinker_eval import run_benchmark_evals, run_train_panel_eval, run_val_eval
 
 logger = logging.getLogger(__name__)
 
@@ -35,17 +36,34 @@ def train_sft(
     batch_size = config.batch_size
     n_batches = len(prompts) // batch_size
     n_epochs = config.num_epochs
+    max_steps = config.max_steps
 
     random.seed(config.seed)
 
+    if n_batches == 0:
+        raise ValueError(
+            f"Not enough training records ({len(prompts)}) for batch_size={batch_size}. "
+            "Reduce batch_size or increase train data."
+        )
+
+    total_steps = (
+        n_batches * n_epochs
+        if max_steps is None
+        else min(n_batches * n_epochs, max_steps)
+    )
+
     logger.info(
         f"Training: {n_epochs} epochs, {n_batches} batches/epoch, "
-        f"batch_size={batch_size}, total_steps={n_batches * n_epochs}"
+        f"batch_size={batch_size}, total_steps={total_steps}"
     )
 
     global_step = 0
+    completed_epochs = 0
+    stopped_early = False
+    train_eval_prompts = list(prompts)
 
     for epoch in range(n_epochs):
+        current_epoch = epoch + 1
         # Shuffle prompts each epoch
         random.shuffle(prompts)
 
@@ -96,7 +114,7 @@ def train_sft(
             elapsed = time.time() - t_start
 
             logger.info(
-                f"[epoch {epoch+1}/{n_epochs}] batch {batch_idx+1}/{n_batches} | "
+                f"[epoch {current_epoch}/{n_epochs}] batch {batch_idx+1}/{n_batches} | "
                 f"nll={train_nll:.4f} | acc={train_acc:.1%} | {elapsed:.1f}s"
             )
             global_step += 1
@@ -107,17 +125,109 @@ def train_sft(
                 "train/batch_time_s": elapsed,
             }, step=global_step)
 
-        logger.info(f"Epoch {epoch+1} complete")
+            if config.eval_trigger == "step" and should_run_training_eval(
+                trigger=config.eval_trigger,
+                frequency=config.eval_frequency,
+                step=global_step,
+                epoch=current_epoch,
+                total_steps=total_steps,
+                total_epochs=n_epochs,
+            ):
+                run_val_eval(
+                    val_prompts,
+                    ctx,
+                    step=global_step,
+                    epoch=current_epoch,
+                    run_dir=config.run_dir,
+                    use_system_prompt=config.use_system_prompt,
+                    eval_trigger=config.eval_trigger,
+                    diagnostic_num_examples=config.eval_diagnostic_num_examples,
+                    diagnostic_example_ids=config.eval_diagnostic_example_ids,
+                )
+                run_train_panel_eval(
+                    train_eval_prompts,
+                    ctx,
+                    step=global_step,
+                    epoch=current_epoch,
+                    run_dir=config.run_dir,
+                    use_system_prompt=config.use_system_prompt,
+                    eval_trigger=config.eval_trigger,
+                    diagnostic_num_examples=config.train_diagnostic_num_examples,
+                    diagnostic_example_ids=config.train_diagnostic_example_ids,
+                )
+                run_benchmark_evals(
+                    config.benchmark_evals,
+                    ctx,
+                    step=global_step,
+                    epoch=current_epoch,
+                    total_epochs=n_epochs,
+                    schedule_index=global_step,
+                    schedule_total=total_steps,
+                    run_dir=config.run_dir,
+                    use_system_prompt=config.use_system_prompt,
+                    eval_trigger=config.eval_trigger,
+                )
 
-        # Validation evaluation at each epoch boundary
-        run_val_eval(
-            val_prompts, ctx, step=global_step, epoch=epoch + 1,
-            run_dir=config.run_dir, use_system_prompt=config.use_system_prompt,
-        )
-        run_benchmark_evals(
-            config.benchmark_evals, ctx, step=global_step, epoch=epoch + 1,
-            total_epochs=n_epochs, run_dir=config.run_dir,
-            use_system_prompt=config.use_system_prompt,
-        )
+            if max_steps is not None and global_step >= max_steps:
+                stopped_early = True
+                logger.info(
+                    "Reached max_steps=%s at epoch %s batch %s/%s",
+                    max_steps,
+                    current_epoch,
+                    batch_idx + 1,
+                    n_batches,
+                )
+                break
 
+        completed_epochs = current_epoch
+        if stopped_early and batch_idx + 1 < n_batches:
+            logger.info("Stopped during epoch %s after %s batches", current_epoch, batch_idx + 1)
+        else:
+            logger.info(f"Epoch {current_epoch} complete")
+
+        if config.eval_trigger == "epoch" and should_run_training_eval(
+            trigger=config.eval_trigger,
+            frequency=config.eval_frequency,
+            step=global_step,
+            epoch=current_epoch,
+            total_steps=total_steps,
+            total_epochs=n_epochs,
+        ):
+            run_val_eval(
+                val_prompts,
+                ctx,
+                step=global_step,
+                epoch=current_epoch,
+                run_dir=config.run_dir,
+                use_system_prompt=config.use_system_prompt,
+                eval_trigger=config.eval_trigger,
+                diagnostic_num_examples=config.eval_diagnostic_num_examples,
+                diagnostic_example_ids=config.eval_diagnostic_example_ids,
+            )
+            run_train_panel_eval(
+                train_eval_prompts,
+                ctx,
+                step=global_step,
+                epoch=current_epoch,
+                run_dir=config.run_dir,
+                use_system_prompt=config.use_system_prompt,
+                eval_trigger=config.eval_trigger,
+                diagnostic_num_examples=config.train_diagnostic_num_examples,
+                diagnostic_example_ids=config.train_diagnostic_example_ids,
+            )
+            run_benchmark_evals(
+                config.benchmark_evals,
+                ctx,
+                step=global_step,
+                epoch=current_epoch,
+                total_epochs=completed_epochs if stopped_early else n_epochs,
+                run_dir=config.run_dir,
+                use_system_prompt=config.use_system_prompt,
+                eval_trigger=config.eval_trigger,
+            )
+
+        if stopped_early:
+            break
+
+    config.completed_epochs = completed_epochs
     return global_step

@@ -24,6 +24,14 @@ from sgtr_rl.runtime_config import load_runtime_config
 logger = logging.getLogger(__name__)
 
 
+def _format_data_sources(paths: list[str], fallback: str) -> str:
+    if paths:
+        if len(paths) == 1:
+            return paths[0]
+        return "[" + ", ".join(paths) + "]"
+    return fallback
+
+
 def main():
     load_dotenv()
     parser = argparse.ArgumentParser(description="SGTR-RL training")
@@ -51,10 +59,19 @@ def main():
     parser.add_argument("--learning_rate", type=float, default=None)
     parser.add_argument("--num_epochs", type=int, default=None)
     parser.add_argument("--batch_size", type=int, default=None)
+    parser.add_argument("--max_steps", type=int, default=None)
     parser.add_argument("--num_rollouts_per_prompt", type=int, default=None)
     parser.add_argument("--max_completion_length", type=int, default=None)
     parser.add_argument("--lora_rank", type=int, default=None)
     parser.add_argument("--seed", type=int, default=None)
+    parser.add_argument("--max_train_ids", type=int, default=None)
+    parser.add_argument("--subset_seed", type=int, default=None)
+    parser.add_argument("--randomize_train_labels", action="store_true")
+    parser.add_argument("--randomize_train_labels_seed", type=int, default=None)
+    parser.add_argument("--eval_diagnostic_num_examples", type=int, default=None)
+    parser.add_argument("--eval_diagnostic_example_ids", nargs="*", default=None)
+    parser.add_argument("--train_diagnostic_num_examples", type=int, default=None)
+    parser.add_argument("--train_diagnostic_example_ids", nargs="*", default=None)
 
     args = parser.parse_args()
 
@@ -68,14 +85,26 @@ def main():
         "learning_rate",
         "num_epochs",
         "batch_size",
+        "max_steps",
         "num_rollouts_per_prompt",
         "max_completion_length",
         "lora_rank",
         "seed",
+        "max_train_ids",
+        "subset_seed",
+        "randomize_train_labels_seed",
+        "eval_diagnostic_num_examples",
+        "train_diagnostic_num_examples",
     ]:
         val = getattr(args, field, None)
         if val is not None:
             setattr(config, field, val)
+    if args.randomize_train_labels:
+        config.randomize_train_labels = True
+    if args.eval_diagnostic_example_ids is not None:
+        config.eval_diagnostic_example_ids = args.eval_diagnostic_example_ids
+    if args.train_diagnostic_example_ids is not None:
+        config.train_diagnostic_example_ids = args.train_diagnostic_example_ids
 
     run_dir = create_run_dir(
         config,
@@ -84,6 +113,9 @@ def main():
         exists=args.exists,
         base_dir=Path(runtime.artifacts.root_dir),
     )
+    if config.skipped_existing_run:
+        print(f"Skipping existing run: {run_dir}")
+        return
 
     setup_logging(config.experiment_name, log_file=run_dir / "train.log")
 
@@ -92,13 +124,55 @@ def main():
     logger.info(f"Runtime backend: {runtime.backend}")
     logger.info(f"Config: algorithm={config.algorithm}")
     logger.info(f"Model: {config.model_name} (LoRA rank={config.lora_rank})")
-    logger.info(f"Data: train={config.train_file}, val={config.val_file}")
+    logger.info(
+        "Data: train=%s, val=%s",
+        _format_data_sources(config.train_files, config.train_file),
+        _format_data_sources(config.val_files, config.val_file),
+    )
+    if len(config.train_files) > 1:
+        logger.info("Train mixing strategy: %s", config.train_mix_strategy)
+    if config.max_train_ids is not None:
+        subset_seed = config.subset_seed if config.subset_seed is not None else config.seed
+        logger.info("Train subset: max_train_ids=%s (seed=%s)", config.max_train_ids, subset_seed)
+    if config.randomize_train_labels:
+        label_seed = (
+            config.randomize_train_labels_seed
+            if config.randomize_train_labels_seed is not None
+            else config.seed
+        )
+        logger.info("Train labels randomized (seed=%s)", label_seed)
     logger.info(
         f"Hyperparameters: lr={config.learning_rate}, epochs={config.num_epochs}, "
         f"batch_size={config.batch_size}, "
+        f"max_steps={config.max_steps}, "
         f"rollouts={config.num_rollouts_per_prompt}, "
         f"max_completion={config.max_completion_length}"
     )
+    logger.info(
+        "Evaluation: trigger=%s, frequency=%s",
+        config.eval_trigger,
+        config.eval_frequency,
+    )
+    if config.eval_diagnostic_num_examples > 0:
+        logger.info(
+            "Eval diagnostics: %s examples%s",
+            config.eval_diagnostic_num_examples,
+            (
+                f", ids={config.eval_diagnostic_example_ids}"
+                if config.eval_diagnostic_example_ids
+                else ""
+            ),
+        )
+    if config.train_diagnostic_num_examples > 0:
+        logger.info(
+            "Train diagnostics: %s examples%s",
+            config.train_diagnostic_num_examples,
+            (
+                f", ids={config.train_diagnostic_example_ids}"
+                if config.train_diagnostic_example_ids
+                else ""
+            ),
+        )
 
     run_training(config, runtime)
 

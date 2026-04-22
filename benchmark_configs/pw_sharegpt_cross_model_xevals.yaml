@@ -1,0 +1,15 @@
+xeval_vs_haiku_3_5_sharegpt:
+  type: sgtr
+  data_file: data/training_data/ll-3.1-8b_ICML_01_UT_PW-Q_Rec_NPr_FA_Inst_vs_haiku-3.5_sharegpt/val.jsonl
+
+xeval_vs_gpt_4o_sharegpt:
+  type: sgtr
+  data_file: data/training_data/ll-3.1-8b_ICML_01_UT_PW-Q_Rec_NPr_FA_Inst_vs_gpt-4o_sharegpt/val.jsonl
+
+xeval_vs_ll_3_1_70b_sharegpt:
+  type: sgtr
+  data_file: data/training_data/ll-3.1-8b_ICML_01_UT_PW-Q_Rec_NPr_FA_Inst_vs_ll-3.1-70b_sharegpt/val.jsonl
+
+xeval_vs_opus_4_1_sharegpt:
+  type: sgtr
+  data_file: data/training_data/ll-3.1-8b_ICML_01_UT_PW-Q_Rec_NPr_FA_Inst_vs_opus-4.1_sharegpt/val.jsonl

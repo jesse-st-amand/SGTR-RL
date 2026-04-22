@@ -5,21 +5,69 @@ from pathlib import Path
 
 from sgtr_rl.artifacts import update_run_status
 from sgtr_rl.config import TrainingConfig
-from sgtr_rl.data import load_jsonl, validate_training_data
+from sgtr_rl.data import (
+    load_jsonl_many,
+    randomize_binary_targets,
+    subset_records_by_id,
+    validate_training_data,
+)
 from sgtr_rl.grpo import train_grpo
 from sgtr_rl.local_sft import train_local_sft
 from sgtr_rl.runtime_config import RuntimeConfig
 from sgtr_rl.sft import train_sft
 from sgtr_rl.tinker import save_checkpoint, setup_tinker
-from sgtr_rl.tinker_eval import run_benchmark_evals, run_val_eval
+from sgtr_rl.tinker_eval import run_benchmark_evals, run_train_panel_eval, run_val_eval
 
 logger = logging.getLogger(__name__)
 
 
 def _load_prompts(config: TrainingConfig) -> list[dict]:
     """Load prompt dataset from JSONL."""
-    prompts = load_jsonl(config.train_file)
-    logger.info(f"Loaded {len(prompts)} training prompts")
+    prompts = load_jsonl_many(
+        config.train_files,
+        strategy=config.train_mix_strategy,
+        seed=config.seed,
+    )
+    original_records = len(prompts)
+
+    if config.max_train_ids is not None:
+        subset_seed = config.subset_seed if config.subset_seed is not None else config.seed
+        prompts = subset_records_by_id(
+            prompts,
+            config.max_train_ids,
+            seed=subset_seed,
+        )
+        logger.info(
+            "Subset train data to %s unique ids using seed=%s (%s records -> %s)",
+            config.max_train_ids,
+            subset_seed,
+            original_records,
+            len(prompts),
+        )
+
+    if config.randomize_train_labels:
+        label_seed = (
+            config.randomize_train_labels_seed
+            if config.randomize_train_labels_seed is not None
+            else config.seed
+        )
+        prompts = randomize_binary_targets(prompts, seed=label_seed)
+        logger.info("Randomized train labels using seed=%s", label_seed)
+
+    if not prompts:
+        raise ValueError("No training prompts loaded after train-data transforms")
+
+    if len(config.train_files) == 1:
+        logger.info(f"Loaded {len(prompts)} training prompts")
+    else:
+        logger.info(
+            "Loaded %s training prompts from %s files (strategy=%s)",
+            len(prompts),
+            len(config.train_files),
+            config.train_mix_strategy,
+        )
+        for path in config.train_files:
+            logger.info("  train source: %s", path)
 
     example = prompts[0]
     prompt = example["prompt"]
@@ -35,10 +83,22 @@ def _load_prompts(config: TrainingConfig) -> list[dict]:
 
 def _load_val_prompts(config: TrainingConfig) -> list[dict]:
     """Load validation dataset from JSONL, if configured."""
-    if not config.val_file or not Path(config.val_file).exists():
+    if not config.val_files:
         return []
-    prompts = load_jsonl(config.val_file)
-    logger.info(f"Loaded {len(prompts)} validation prompts")
+    missing = [path for path in config.val_files if not Path(path).exists()]
+    if missing:
+        raise FileNotFoundError(f"Validation files not found: {missing}")
+    prompts = load_jsonl_many(config.val_files)
+    if len(config.val_files) == 1:
+        logger.info(f"Loaded {len(prompts)} validation prompts")
+    else:
+        logger.info(
+            "Loaded %s validation prompts from %s files",
+            len(prompts),
+            len(config.val_files),
+        )
+        for path in config.val_files:
+            logger.info("  val source: %s", path)
     return prompts
 
 
@@ -58,6 +118,20 @@ def _run_tinker_training(
         epoch=0,
         run_dir=config.run_dir,
         use_system_prompt=config.use_system_prompt,
+        eval_trigger=config.eval_trigger,
+        diagnostic_num_examples=config.eval_diagnostic_num_examples,
+        diagnostic_example_ids=config.eval_diagnostic_example_ids,
+    )
+    run_train_panel_eval(
+        prompts,
+        ctx,
+        step=0,
+        epoch=0,
+        run_dir=config.run_dir,
+        use_system_prompt=config.use_system_prompt,
+        eval_trigger=config.eval_trigger,
+        diagnostic_num_examples=config.train_diagnostic_num_examples,
+        diagnostic_example_ids=config.train_diagnostic_example_ids,
     )
     run_benchmark_evals(
         config.benchmark_evals,
@@ -67,6 +141,7 @@ def _run_tinker_training(
         total_epochs=config.num_epochs,
         run_dir=config.run_dir,
         use_system_prompt=config.use_system_prompt,
+        eval_trigger=config.eval_trigger,
     )
 
     train_fns = {"sft": train_sft, "grpo": train_grpo}
@@ -123,6 +198,6 @@ def run_training(config: TrainingConfig, runtime: RuntimeConfig | None = None) -
         backend=runtime.backend,
         algorithm=config.algorithm,
         step=global_step,
-        epoch=config.num_epochs,
+        epoch=config.completed_epochs or config.num_epochs,
     )
     logger.info(f"Training complete. {global_step} steps.")

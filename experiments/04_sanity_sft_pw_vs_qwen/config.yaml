@@ -1,0 +1,39 @@
+experiment_name: "04_sanity_sft_pw_vs_qwen"
+description: "Sanity-check SFT runs on PW recognition vs qwen-2.5-7b (ShareGPT). Intended for train-size and label-randomization sweeps via CLI overrides."
+
+algorithm: sft
+wandb_project: sgtr-rl
+
+evaluation:
+  trigger: step
+  frequency: 20
+
+data:
+  generator_models: [qwen-2.5-7b]
+  dataset: sharegpt
+  train_file: data/training_data/ll-3.1-8b_ICML_01_UT_PW-Q_Rec_NPr_FA_Inst_vs_qwen-2.5-7b_sharegpt/train.jsonl
+  val_file: data/training_data/ll-3.1-8b_ICML_01_UT_PW-Q_Rec_NPr_FA_Inst_vs_qwen-2.5-7b_sharegpt/val.jsonl
+
+model:
+  name: meta-llama/Llama-3.1-8B-Instruct
+  lora_rank: 32
+
+hyperparameters:
+  learning_rate: 5.0e-5
+  num_epochs: 100
+  batch_size: 16
+  max_steps: 100
+  seed: 42
+
+benchmark_evals:
+  mmlu_20:
+    type: mmlu
+    data_file: data/benchmarks/mmlu.jsonl
+    num_samples: 20
+    schedule: end_only
+    cot: true
+
+  xeval_dataset_wikisum:
+    type: sgtr
+    data_file: data/training_data/ll-3.1-8b_ICML_01_UT_PW-Q_Rec_NPr_FA_Inst_vs_qwen-2.5-7b_wikisum/val.jsonl
+    schedule: end_only

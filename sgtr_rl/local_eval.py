@@ -18,7 +18,22 @@ from sgtr_rl.benchmarks import (
     subsample,
 )
 from sgtr_rl.data import build_conversation
-from sgtr_rl.metrics import log_val_metrics, log_val_result, save_val_predictions
+from sgtr_rl.eval_diagnostics import (
+    build_prompt_preview,
+    select_binary_diagnostic_items,
+    summarize_binary_margin_rows,
+)
+from sgtr_rl.metrics import (
+    log_binary_eval_result,
+    log_split_metrics,
+    log_val_metrics,
+    log_val_result,
+    make_eval_artifact_name,
+    save_split_diagnostics,
+    save_split_predictions,
+    save_val_diagnostics,
+    save_val_predictions,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -83,6 +98,72 @@ def _generate_completions(
         model.config.use_cache = original_use_cache
         tokenizer.padding_side = old_padding_side
     return outputs
+
+
+def compute_binary_margin_diagnostics(
+    items: list[dict],
+    ctx: "LocalTrainingContext",
+    *,
+    use_system_prompt: bool = False,
+) -> dict:
+    """Measure log p(1) - log p(2) on a fixed panel of examples."""
+    tokenizer = ctx.tokenizer
+    model = ctx.model
+    model.eval()
+
+    token_1 = tokenizer.encode("1", add_special_tokens=False)
+    token_2 = tokenizer.encode("2", add_special_tokens=False)
+    if len(token_1) != 1 or len(token_2) != 1:
+        raise ValueError("Expected '1' and '2' to encode to single tokens")
+    token_1_id = token_1[0]
+    token_2_id = token_2[0]
+
+    rows = []
+    for item in items:
+        prompt = build_conversation(item, use_system_prompt)
+        prompt_text = (
+            tokenizer.apply_chat_template(
+                prompt,
+                tokenize=False,
+                add_generation_prompt=True,
+            )
+            if getattr(tokenizer, "chat_template", None)
+            else "\n\n".join(
+                [f"{msg['role'].upper()}: {msg['content']}" for msg in prompt] + ["ASSISTANT:"]
+            )
+        )
+        encoded = tokenizer(
+            prompt_text,
+            return_tensors="pt",
+            truncation=True,
+            max_length=ctx.runtime.local.max_seq_length,
+        )
+        encoded = {key: value.to(ctx.device) for key, value in encoded.items()}
+        with torch.inference_mode():
+            outputs = model(**encoded)
+            logits = outputs.logits[0, -1]
+            log_probs = torch.nn.functional.log_softmax(logits, dim=-1)
+        logprob_1 = float(log_probs[token_1_id].item())
+        logprob_2 = float(log_probs[token_2_id].item())
+        margin = logprob_1 - logprob_2
+        predicted_by_margin = "1" if margin >= 0 else "2"
+        rows.append(
+            {
+                "id": item.get("id", ""),
+                "target": item["target"],
+                "predicted_by_margin": predicted_by_margin,
+                "correct_by_margin": predicted_by_margin == item["target"],
+                "logprob_1": logprob_1,
+                "logprob_2": logprob_2,
+                "margin_1_minus_2": margin,
+                "prompt_preview": build_prompt_preview(item),
+            }
+        )
+
+    return {
+        "examples": rows,
+        "summary": summarize_binary_margin_rows(rows),
+    }
 
 
 def compute_val_nll(
@@ -321,14 +402,20 @@ def _save_benchmark_predictions(
     cfg,
     *,
     epoch: int,
+    step: int,
+    eval_trigger: str,
     run_dir: str,
     extra_fields: dict,
 ) -> None:
     pred_dir = Path(run_dir) / "benchmark_predictions" / cfg.name
     pred_dir.mkdir(parents=True, exist_ok=True)
-    pred_path = pred_dir / f"epoch_{epoch}.json"
+    pred_path = pred_dir / (
+        f"{make_eval_artifact_name(epoch=epoch, step=step, eval_trigger=eval_trigger)}.json"
+    )
     payload = {
         "epoch": epoch,
+        "step": step,
+        "eval_trigger": eval_trigger,
         "name": cfg.name,
         "type": cfg.type,
         **extra_fields,
@@ -373,6 +460,9 @@ def run_val_eval(
     epoch: int,
     run_dir: str | None = None,
     use_system_prompt: bool = False,
+    eval_trigger: str = "epoch",
+    diagnostic_num_examples: int = 0,
+    diagnostic_example_ids: list[str] | None = None,
 ) -> dict | None:
     if not val_prompts:
         return None
@@ -382,8 +472,128 @@ def run_val_eval(
     log_val_result(val_result)
     log_val_metrics(ctx.metrics_logger, val_result, step=step)
     if run_dir:
-        save_val_predictions(val_result, run_dir, epoch)
+        save_val_predictions(
+            val_result,
+            run_dir,
+            epoch=epoch,
+            step=step,
+            eval_trigger=eval_trigger,
+        )
+        diagnostic_items = select_binary_diagnostic_items(
+            val_prompts,
+            num_examples=diagnostic_num_examples,
+            example_ids=diagnostic_example_ids,
+        )
+        if diagnostic_items:
+            diagnostic_payload = compute_binary_margin_diagnostics(
+                diagnostic_items,
+                ctx,
+                use_system_prompt=use_system_prompt,
+            )
+            diagnostic_payload.update(
+                {
+                    "epoch": epoch,
+                    "step": step,
+                    "eval_trigger": eval_trigger,
+                }
+            )
+            save_val_diagnostics(
+                diagnostic_payload,
+                run_dir,
+                epoch=epoch,
+                step=step,
+                eval_trigger=eval_trigger,
+            )
+            summary = diagnostic_payload["summary"]
+            ctx.metrics_logger.log_metrics(
+                {
+                    "val_diag/accuracy": float(summary["accuracy"]),
+                    "val_diag/mean_margin_1_minus_2": float(
+                        summary["mean_margin_1_minus_2"]
+                    ),
+                    "val_diag/predicted_1_pct": (
+                        float(summary["predicted_1_count"])
+                        / max(int(summary["num_examples"]), 1)
+                    ),
+                },
+                step=step,
+            )
     return val_result
+
+
+def run_train_panel_eval(
+    train_prompts: list[dict],
+    ctx: "LocalTrainingContext",
+    *,
+    step: int,
+    epoch: int,
+    run_dir: str | None = None,
+    use_system_prompt: bool = False,
+    eval_trigger: str = "epoch",
+    diagnostic_num_examples: int = 0,
+    diagnostic_example_ids: list[str] | None = None,
+) -> dict | None:
+    diagnostic_items = select_binary_diagnostic_items(
+        train_prompts,
+        num_examples=diagnostic_num_examples,
+        example_ids=diagnostic_example_ids,
+    )
+    if not diagnostic_items:
+        return None
+
+    train_result = evaluate_val(diagnostic_items, ctx, use_system_prompt=use_system_prompt)
+    train_result["nll"] = compute_val_nll(
+        diagnostic_items,
+        ctx,
+        use_system_prompt=use_system_prompt,
+    )
+    log_binary_eval_result("train_panel", train_result)
+    log_split_metrics(ctx.metrics_logger, train_result, step=step, prefix="train_panel")
+
+    if run_dir:
+        save_split_predictions(
+            train_result,
+            run_dir,
+            split_name="train_panel",
+            epoch=epoch,
+            step=step,
+            eval_trigger=eval_trigger,
+        )
+        diagnostic_payload = compute_binary_margin_diagnostics(
+            diagnostic_items,
+            ctx,
+            use_system_prompt=use_system_prompt,
+        )
+        diagnostic_payload.update(
+            {
+                "epoch": epoch,
+                "step": step,
+                "eval_trigger": eval_trigger,
+            }
+        )
+        save_split_diagnostics(
+            diagnostic_payload,
+            run_dir,
+            split_name="train_panel",
+            epoch=epoch,
+            step=step,
+            eval_trigger=eval_trigger,
+        )
+        summary = diagnostic_payload["summary"]
+        ctx.metrics_logger.log_metrics(
+            {
+                "train_panel_diag/accuracy": float(summary["accuracy"]),
+                "train_panel_diag/mean_margin_1_minus_2": float(
+                    summary["mean_margin_1_minus_2"]
+                ),
+                "train_panel_diag/predicted_1_pct": (
+                    float(summary["predicted_1_count"])
+                    / max(int(summary["num_examples"]), 1)
+                ),
+            },
+            step=step,
+        )
+    return train_result
 
 
 def run_benchmark_evals(
@@ -393,22 +603,52 @@ def run_benchmark_evals(
     step: int,
     epoch: int,
     total_epochs: int,
+    schedule_index: int | None = None,
+    schedule_total: int | None = None,
     run_dir: str | None = None,
     use_system_prompt: bool = False,
+    eval_trigger: str = "epoch",
 ) -> None:
     if not configs:
         return
 
+    current_index = schedule_index if schedule_index is not None else epoch
+    total_index = schedule_total if schedule_total is not None else total_epochs
     due = [
         cfg
         for cfg in configs
-        if should_run_benchmark(cfg.schedule, cfg.frequency, epoch, total_epochs)
+        if should_run_benchmark(cfg.schedule, cfg.frequency, current_index, total_index)
     ]
     if not due:
         return
 
+    run_benchmark_configs(
+        due,
+        ctx,
+        step=step,
+        epoch=epoch,
+        run_dir=run_dir,
+        use_system_prompt=use_system_prompt,
+        eval_trigger=eval_trigger,
+    )
+
+
+def run_benchmark_configs(
+    configs,
+    ctx: "LocalTrainingContext",
+    *,
+    step: int,
+    epoch: int,
+    run_dir: str | None = None,
+    use_system_prompt: bool = False,
+    eval_trigger: str = "epoch",
+) -> None:
+    """Run a concrete list of benchmark configs immediately."""
+    if not configs:
+        return
+
     all_metrics: dict[str, float] = {}
-    for cfg in due:
+    for cfg in configs:
         logger.info("Running benchmark eval: %s (type=%s, epoch=%s)", cfg.name, cfg.type, epoch)
         data = subsample(load_benchmark_data(cfg.data_file), cfg.num_samples)
         if cfg.type == "sgtr":
@@ -429,6 +669,8 @@ def run_benchmark_evals(
                 result,
                 cfg,
                 epoch=epoch,
+                step=step,
+                eval_trigger=eval_trigger,
                 run_dir=run_dir,
                 extra_fields=extra,
             )

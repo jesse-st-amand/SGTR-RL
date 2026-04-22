@@ -1,0 +1,11 @@
+mmlu_500_cot:
+  type: mmlu
+  data_file: data/benchmarks/mmlu.jsonl
+  num_samples: 500
+  cot: true
+
+mmlu_500_nocot:
+  type: mmlu
+  data_file: data/benchmarks/mmlu.jsonl
+  num_samples: 500
+  cot: false

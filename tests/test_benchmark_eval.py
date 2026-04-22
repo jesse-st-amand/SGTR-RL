@@ -6,6 +6,7 @@ from sgtr_rl.benchmarks import (
     extract_mmlu_answer,
     format_mmlu_prompt,
     should_run_benchmark,
+    should_run_training_eval,
     subsample,
 )
 
@@ -148,3 +149,57 @@ class TestShouldRunBenchmark:
     def test_should_run_end_only(self):
         assert should_run_benchmark("end_only", 1, epoch=5, total_epochs=10) is False
         assert should_run_benchmark("end_only", 1, epoch=10, total_epochs=10) is True
+
+
+class TestShouldRunTrainingEval:
+    def test_epoch_trigger_uses_epoch_frequency_and_final(self):
+        assert should_run_training_eval(
+            trigger="epoch",
+            frequency=5,
+            step=23,
+            epoch=5,
+            total_steps=100,
+            total_epochs=20,
+        ) is True
+        assert should_run_training_eval(
+            trigger="epoch",
+            frequency=5,
+            step=24,
+            epoch=6,
+            total_steps=100,
+            total_epochs=20,
+        ) is False
+        assert should_run_training_eval(
+            trigger="epoch",
+            frequency=5,
+            step=100,
+            epoch=20,
+            total_steps=100,
+            total_epochs=20,
+        ) is True
+
+    def test_step_trigger_uses_step_frequency_and_final(self):
+        assert should_run_training_eval(
+            trigger="step",
+            frequency=20,
+            step=20,
+            epoch=2,
+            total_steps=100,
+            total_epochs=10,
+        ) is True
+        assert should_run_training_eval(
+            trigger="step",
+            frequency=20,
+            step=21,
+            epoch=3,
+            total_steps=100,
+            total_epochs=10,
+        ) is False
+        assert should_run_training_eval(
+            trigger="step",
+            frequency=20,
+            step=100,
+            epoch=10,
+            total_steps=100,
+            total_epochs=10,
+        ) is True

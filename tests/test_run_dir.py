@@ -1,5 +1,6 @@
 """Tests for sgtr_rl.runs."""
 
+import json
 from unittest.mock import patch
 
 import pytest
@@ -59,6 +60,30 @@ class TestComputeOverrides:
         result = compute_overrides(config, str(tmp_path / "nonexistent.yaml"))
         assert result == ""
 
+    def test_compute_overrides_uses_defaults_for_missing_fields(self, tmp_path):
+        yaml_config = {
+            "hyperparameters": {"learning_rate": 5e-5},
+            "data": {"train_file": "train.jsonl"},
+        }
+        yaml_path = tmp_path / "config.yaml"
+        with open(yaml_path, "w") as f:
+            yaml.dump(yaml_config, f)
+
+        config = TrainingConfig(
+            max_steps=25,
+            max_train_ids=10,
+            randomize_train_labels=True,
+            eval_trigger="step",
+            eval_frequency=20,
+        )
+        result = compute_overrides(config, str(yaml_path))
+
+        assert "steps=25" in result
+        assert "train_ids=10" in result
+        assert "rand_labels=True" in result
+        assert "eval=step" in result
+        assert "eval_freq=20" in result
+
 
 # create_run_dir
 
@@ -114,6 +139,61 @@ class TestCreateRunDir:
             first_dir = create_run_dir(config, sample_config_yaml, exists="new")
             second_dir = create_run_dir(config, sample_config_yaml, exists="skip")
             assert second_dir == first_dir
+            assert config.skipped_existing_run is True
+
+    def test_create_run_dir_exists_skip_distinguishes_overrides(self, tmp_path, sample_config_yaml):
+        (tmp_path / "train.jsonl").write_text("")
+
+        first = TrainingConfig(
+            experiment_name="test_exp",
+            train_file=str(tmp_path / "train.jsonl"),
+            max_train_ids=1,
+        )
+        second = TrainingConfig(
+            experiment_name="test_exp",
+            train_file=str(tmp_path / "train.jsonl"),
+            max_train_ids=10,
+        )
+
+        with patch("sgtr_rl.runs.BASE_DIR", tmp_path / "results"):
+            first_dir = create_run_dir(first, sample_config_yaml, exists="new")
+            second_dir = create_run_dir(second, sample_config_yaml, exists="skip")
+
+        assert first_dir != second_dir
+        assert second.skipped_existing_run is False
+
+    def test_create_run_dir_writes_combined_metadata_for_multiple_sources(
+        self,
+        tmp_path,
+        sample_config_yaml,
+    ):
+        train_a = tmp_path / "dataset_a" / "train.jsonl"
+        train_b = tmp_path / "dataset_b" / "train.jsonl"
+        train_a.parent.mkdir()
+        train_b.parent.mkdir()
+        train_a.write_text("")
+        train_b.write_text("")
+        (train_a.parent / "metadata.json").write_text(json.dumps({"source": "dataset_a"}))
+        (train_b.parent / "metadata.json").write_text(json.dumps({"source": "dataset_b"}))
+
+        config = TrainingConfig(
+            experiment_name="test_exp",
+            train_file=str(train_a),
+            train_files=[str(train_a), str(train_b)],
+        )
+
+        with patch("sgtr_rl.runs.BASE_DIR", tmp_path / "results"):
+            run_dir = create_run_dir(config, sample_config_yaml, exists="new")
+
+        with open(run_dir / "metadata.json") as f:
+            metadata = yaml.safe_load(f)
+
+        assert metadata["combined_sources"] is True
+        assert metadata["train_files"] == [str(train_a), str(train_b)]
+        assert [entry["source"] for entry in metadata["source_metadata"]] == [
+            "dataset_a",
+            "dataset_b",
+        ]
 
 
 # _find_existing_run
@@ -124,6 +204,15 @@ class TestFindExistingRun:
         run_dir.mkdir()
         result = _find_existing_run(tmp_path, "test_exp")
         assert result == run_dir
+
+    def test_find_existing_run_matches_overrides(self, tmp_path):
+        run_a = tmp_path / "test_exp__train_ids=1__20250101_120000"
+        run_b = tmp_path / "test_exp__train_ids=10__20250101_130000"
+        run_a.mkdir()
+        run_b.mkdir()
+
+        result = _find_existing_run(tmp_path, "test_exp", "train_ids=10")
+        assert result == run_b
 
     def test_find_existing_run_not_found(self, tmp_path):
         result = _find_existing_run(tmp_path, "nonexistent")

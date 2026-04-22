@@ -1,9 +1,15 @@
 """Shared fixtures for SGTR-RL test suite."""
 
 import json
+import sys
+from pathlib import Path
 
 import pytest
 import yaml
+
+ROOT = Path(__file__).resolve().parent.parent
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
 
 
 def _pw_record(id: str, target: str, **extra) -> dict:
