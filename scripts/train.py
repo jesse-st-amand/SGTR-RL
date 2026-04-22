@@ -50,6 +50,14 @@ def main():
     )
     parser.add_argument("--group", default=None, help="Group subdirectory for run (e.g. sweep_lr)")
     parser.add_argument(
+        "--wandb-project",
+        default=None,
+        help=(
+            "Override wandb project name. Pass an empty string to disable wandb logging for "
+            "this run."
+        ),
+    )
+    parser.add_argument(
         "--exists",
         default="new",
         choices=["new", "error", "skip", "overwrite"],
@@ -102,6 +110,8 @@ def main():
     runtime = load_runtime_config(args.runtime)
     if args.backend is not None:
         runtime.backend = args.backend
+    if args.wandb_project is not None:
+        config.wandb_project = args.wandb_project or None
 
     if args.resume_manifest:
         resume_manifest_path = Path(args.resume_manifest)

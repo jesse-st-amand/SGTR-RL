@@ -91,6 +91,11 @@ def parse_args() -> argparse.Namespace:
         default="new",
         help="Run directory collision policy passed through to scripts.train",
     )
+    parser.add_argument(
+        "--disable-wandb",
+        action="store_true",
+        help="Disable wandb logging for the launched training runs.",
+    )
     parser.add_argument("--launch", action="store_true", help="Launch detached batch runner.")
     parser.add_argument("--list", action="store_true", help="List available batches.")
     parser.add_argument("--dry-run", action="store_true", help="Print configs without running.")
@@ -113,7 +118,7 @@ def _resolve_configs(batch_name: str) -> list[str]:
     return configs
 
 
-def _run_foreground(batch_name: str, backend: str, exists: str) -> int:
+def _run_foreground(batch_name: str, backend: str, exists: str, disable_wandb: bool) -> int:
     configs = _resolve_configs(batch_name)
     python_exe = _python_executable()
     print(f"Running batch '{batch_name}' with {len(configs)} configs")
@@ -130,7 +135,8 @@ def _run_foreground(batch_name: str, backend: str, exists: str) -> int:
                 backend,
                 "--exists",
                 exists,
-            ],
+            ]
+            + (["--wandb-project", ""] if disable_wandb else []),
             cwd=ROOT,
             check=True,
         )
@@ -138,7 +144,7 @@ def _run_foreground(batch_name: str, backend: str, exists: str) -> int:
     return 0
 
 
-def _launch_detached(batch_name: str, backend: str, exists: str) -> int:
+def _launch_detached(batch_name: str, backend: str, exists: str, disable_wandb: bool) -> int:
     configs = _resolve_configs(batch_name)
     LOG_DIR.mkdir(parents=True, exist_ok=True)
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -155,7 +161,7 @@ def _launch_detached(batch_name: str, backend: str, exists: str) -> int:
         backend,
         "--exists",
         exists,
-    ]
+    ] + (["--disable-wandb"] if disable_wandb else [])
     env = os.environ.copy()
     env["PYTHONUNBUFFERED"] = "1"
     with log_path.open("wb") as log_handle:
@@ -171,6 +177,7 @@ def _launch_detached(batch_name: str, backend: str, exists: str) -> int:
         "batch": batch_name,
         "backend": backend,
         "exists": exists,
+        "disable_wandb": disable_wandb,
         "pid": proc.pid,
         "started_at": timestamp,
         "log_path": str(log_path),
@@ -197,8 +204,8 @@ def main() -> int:
             print(config)
         return 0
     if args.launch:
-        return _launch_detached(args.batch, args.backend, args.exists)
-    return _run_foreground(args.batch, args.backend, args.exists)
+        return _launch_detached(args.batch, args.backend, args.exists, args.disable_wandb)
+    return _run_foreground(args.batch, args.backend, args.exists, args.disable_wandb)
 
 
 if __name__ == "__main__":

@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import argparse
 import json
 from collections import defaultdict
 from pathlib import Path
@@ -10,18 +11,10 @@ from pathlib import Path
 import matplotlib.pyplot as plt
 import numpy as np
 
-ROOT = Path(__file__).resolve().parents[1]
-LOCAL_RESULTS_DIR = ROOT / "results"
-EXTERNAL_RESULTS_DIR = ROOT.parent / "self-rec-research" / "_external" / "SGTR-RL" / "results"
-RESULTS_DIR = (
-    LOCAL_RESULTS_DIR
-    if (LOCAL_RESULTS_DIR / "01_sft_pw_vs_qwen3_30b_tinker_small__20260324_130227").exists()
-    else EXTERNAL_RESULTS_DIR
-)
-OUTPUT_DIR = ROOT / "results" / "transfer_plots"
+from sgtr_rl.transfer_result_sources import TransferRunResolver
 
-STANDARD_OUTPUT = OUTPUT_DIR / "corrected_transfer_heatmap_standard.png"
-ADVERSARIAL_OUTPUT = OUTPUT_DIR / "corrected_transfer_heatmap_adversarial.png"
+ROOT = Path(__file__).resolve().parents[1]
+OUTPUT_DIR = ROOT / "results" / "transfer_plots"
 
 DATASET_KEYS = {
     "ShareGPT": "sharegpt",
@@ -33,6 +26,42 @@ DATASET_KEYS = {
 TASK_EVAL_ORDER = ["PW (UT)", "IND (UT)", "PW (AT)", "IND (AT)"]
 PREF_EVAL_ORDER = ["PW Pref", "IND Pref"]
 DATASET_EVAL_ORDER = ["ShareGPT", "WikiSum", "BigCode", "PKU"]
+
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        description="Plot transfer heatmaps from explicit run sources."
+    )
+    parser.add_argument(
+        "--source",
+        choices=["old", "clean", "compare"],
+        default="old",
+        help="Which run source to plot.",
+    )
+    parser.add_argument(
+        "--plot-set",
+        choices=["standard", "adversarial", "all"],
+        default="standard",
+        help="Which experiment family to render.",
+    )
+    parser.add_argument(
+        "--clean-manifest",
+        action="append",
+        default=[],
+        help="Explicit clean batch manifest(s). Defaults to the latest standard manifests.",
+    )
+    parser.add_argument(
+        "--allow-missing",
+        action="store_true",
+        help="Skip rows whose requested runs are not completed yet instead of failing.",
+    )
+    parser.add_argument(
+        "--output-dir",
+        type=Path,
+        default=OUTPUT_DIR,
+        help="Base directory for rendered plots.",
+    )
+    return parser.parse_args()
 
 
 def standard_specs() -> list[dict]:
@@ -354,28 +383,6 @@ def adversarial_specs() -> list[dict]:
             ],
         }
     ]
-
-
-def resolve_completed(glob_pattern: str) -> Path:
-    matches = sorted(RESULTS_DIR.glob(glob_pattern))
-    if not matches:
-        raise FileNotFoundError(f"No matches for {glob_pattern}")
-    completed: list[Path] = []
-    for match in matches:
-        status_path = match / "status.json"
-        if not status_path.exists():
-            continue
-        try:
-            status = json.loads(status_path.read_text()).get("status")
-        except Exception:
-            status = None
-        if status == "completed":
-            completed.append(match)
-    if not completed:
-        raise FileNotFoundError(f"No completed runs for {glob_pattern}")
-    return completed[-1]
-
-
 def load_metrics_by_step(run_dir: Path) -> dict[int, dict]:
     merged: dict[int, dict] = defaultdict(dict)
     with (run_dir / "metrics" / "metrics.jsonl").open() as f:
@@ -539,77 +546,108 @@ def delta_or_nan(pre_row: dict, post_row: dict, candidates: list[str]) -> float:
     return post - pre
 
 
-def build_matrix(group_specs: list[dict]) -> tuple[np.ndarray, list[str], list[float]]:
-    row_labels: list[str] = []
-    rows: list[list[float]] = []
-    separators: list[float] = []
+def build_row_values(spec: dict, run_dir: Path) -> list[float]:
+    pre_row, post_row = get_first_last(run_dir)
+    row: list[float] = []
+    for eval_task in TASK_EVAL_ORDER:
+        row.append(
+            delta_or_nan(pre_row, post_row, task_metric_candidates(spec["trained_task"], eval_task))
+        )
+    for pref_task in PREF_EVAL_ORDER:
+        row.append(
+            delta_or_nan(pre_row, post_row, task_metric_candidates(spec["trained_task"], pref_task))
+        )
+    dataset_vals: list[float] = []
+    for eval_dataset in DATASET_EVAL_ORDER:
+        if eval_dataset == spec["trained_dataset"]:
+            value = np.nan
+        else:
+            value = delta_or_nan(pre_row, post_row, dataset_metric_candidates(eval_dataset))
+        dataset_vals.append(value)
+        row.append(value)
 
-    for group_index, group in enumerate(group_specs):
-        if group_index > 0:
-            separators.append(len(row_labels) - 0.5)
+    rec_vals = row[:4]
+    mean_rec = float(np.nanmean(rec_vals)) if not np.all(np.isnan(rec_vals)) else np.nan
+    mean_dataset = float(np.nanmean(dataset_vals)) if not np.all(np.isnan(dataset_vals)) else np.nan
+    row.extend([mean_rec, mean_dataset])
+    return row
+
+
+def build_rows(
+    group_specs: list[dict],
+    resolver: TransferRunResolver,
+    *,
+    allow_missing: bool,
+) -> list[dict]:
+    rows: list[dict] = []
+    for group in group_specs:
         for spec in group["rows"]:
-            run_dir = resolve_completed(spec["glob"])
-            pre_row, post_row = get_first_last(run_dir)
-
-            row: list[float] = []
-            for eval_task in TASK_EVAL_ORDER:
-                row.append(
-                    delta_or_nan(
-                        pre_row, post_row, task_metric_candidates(spec["trained_task"], eval_task)
-                    )
-                )
-            for pref_task in PREF_EVAL_ORDER:
-                row.append(
-                    delta_or_nan(
-                        pre_row, post_row, task_metric_candidates(spec["trained_task"], pref_task)
-                    )
-                )
-            dataset_vals: list[float] = []
-            for eval_dataset in DATASET_EVAL_ORDER:
-                if eval_dataset == spec["trained_dataset"]:
-                    value = np.nan
-                else:
-                    value = delta_or_nan(pre_row, post_row, dataset_metric_candidates(eval_dataset))
-                dataset_vals.append(value)
-                row.append(value)
-
-            rec_vals = row[:4]
-            mean_rec = float(np.nanmean(rec_vals)) if not np.all(np.isnan(rec_vals)) else np.nan
-            mean_dataset = (
-                float(np.nanmean(dataset_vals)) if not np.all(np.isnan(dataset_vals)) else np.nan
+            resolved = resolver.resolve(spec["glob"], required=not allow_missing)
+            if resolved is None:
+                continue
+            rows.append(
+                {
+                    "group": group["group"],
+                    "label": spec["label"],
+                    "glob": spec["glob"],
+                    "run_dir": resolved.run_dir,
+                    "values": build_row_values(spec, resolved.run_dir),
+                }
             )
-            row.extend([mean_rec, mean_dataset])
+    if not rows:
+        raise FileNotFoundError(
+            f"No rows available for source={resolver.source_name}. "
+            "If runs are still in progress, retry later or use --allow-missing."
+        )
+    return rows
 
-            row_labels.append(spec["label"])
-            rows.append(row)
 
-    return np.array(rows, dtype=float), row_labels, separators
+def rows_to_matrix(rows: list[dict]) -> tuple[np.ndarray, list[str], list[float]]:
+    separators: list[float] = []
+    row_labels: list[str] = []
+    matrix_rows: list[list[float]] = []
+    prev_group: str | None = None
+    for row in rows:
+        if prev_group is not None and row["group"] != prev_group:
+            separators.append(len(row_labels) - 0.5)
+        row_labels.append(row["label"])
+        matrix_rows.append(row["values"])
+        prev_group = row["group"]
+    return np.array(matrix_rows, dtype=float), row_labels, separators
 
 
-def plot_heatmap(group_specs: list[dict], output_path: Path, title: str) -> Path:
-    matrix, row_labels, separators = build_matrix(group_specs)
-    col_labels = [
-        "PW (UT)\nRec",
-        "IND (UT)\nRec",
-        "PW (AT)\nRec",
-        "IND (AT)\nRec",
-        "PW\nPref",
-        "IND\nPref",
-        "ShareGPT",
-        "WikiSum",
-        "BigCode",
-        "PKU",
-        "Mean\nRec",
-        "Mean\nDataset",
-    ]
+COLUMN_LABELS = [
+    "PW (UT)\nRec",
+    "IND (UT)\nRec",
+    "PW (AT)\nRec",
+    "IND (AT)\nRec",
+    "PW\nPref",
+    "IND\nPref",
+    "ShareGPT",
+    "WikiSum",
+    "BigCode",
+    "PKU",
+    "Mean\nRec",
+    "Mean\nDataset",
+]
 
-    fig_h = max(8, 0.38 * len(row_labels) + 2.8)
-    fig, ax = plt.subplots(figsize=(13.5, fig_h), constrained_layout=True)
 
+def _draw_heatmap(
+    ax,
+    matrix: np.ndarray,
+    row_labels: list[str],
+    separators: list[float],
+    *,
+    title: str,
+    cmap: str,
+    vmin: float,
+    vmax: float,
+    colorbar_label: str,
+):
     masked = np.ma.masked_invalid(matrix)
-    im = ax.imshow(masked, cmap="RdYlGn", vmin=-1.0, vmax=1.0, aspect="auto")
-    ax.set_xticks(np.arange(len(col_labels)))
-    ax.set_xticklabels(col_labels, rotation=0, fontsize=10)
+    im = ax.imshow(masked, cmap=cmap, vmin=vmin, vmax=vmax, aspect="auto")
+    ax.set_xticks(np.arange(len(COLUMN_LABELS)))
+    ax.set_xticklabels(COLUMN_LABELS, rotation=0, fontsize=10)
     ax.set_yticks(np.arange(len(row_labels)))
     ax.set_yticklabels(row_labels, fontsize=9)
 
@@ -637,40 +675,233 @@ def plot_heatmap(group_specs: list[dict], output_path: Path, title: str) -> Path
             text_color = "white" if abs(value) >= 0.32 else "black"
             ax.text(j, i, f"{value:+.2f}", ha="center", va="center", fontsize=8, color=text_color)
 
-    cbar = fig.colorbar(im, ax=ax, shrink=0.88)
-    cbar.set_label("Accuracy Δ (post - pre)")
     ax.set_title(title, fontsize=16, fontweight="bold", pad=30)
+    return im, colorbar_label
+
+
+def _write_run_manifest(output_path: Path, payload: dict) -> None:
+    manifest_path = output_path.with_suffix(".sources.json")
+    manifest_path.write_text(json.dumps(payload, indent=2) + "\n")
+
+
+def plot_source_heatmap(
+    group_specs: list[dict],
+    resolver: TransferRunResolver,
+    *,
+    allow_missing: bool,
+    output_path: Path,
+    title: str,
+) -> Path:
+    rows = build_rows(group_specs, resolver, allow_missing=allow_missing)
+    matrix, row_labels, separators = rows_to_matrix(rows)
+    fig_h = max(8, 0.38 * len(row_labels) + 2.8)
+    fig, ax = plt.subplots(figsize=(13.5, fig_h), constrained_layout=True)
+    im, colorbar_label = _draw_heatmap(
+        ax,
+        matrix,
+        row_labels,
+        separators,
+        title=title,
+        cmap="RdYlGn",
+        vmin=-1.0,
+        vmax=1.0,
+        colorbar_label="Accuracy Δ (post - pre)",
+    )
+    cbar = fig.colorbar(im, ax=ax, shrink=0.88)
+    cbar.set_label(colorbar_label)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(output_path, dpi=200, bbox_inches="tight")
     plt.close(fig)
+    _write_run_manifest(
+        output_path,
+        {
+            "resolver": resolver.describe(),
+            "rows": [
+                {
+                    "group": row["group"],
+                    "label": row["label"],
+                    "glob": row["glob"],
+                    "run_dir": str(row["run_dir"]),
+                }
+                for row in rows
+            ],
+        },
+    )
     return output_path
 
 
+def plot_compare_heatmap(
+    group_specs: list[dict],
+    old_resolver: TransferRunResolver,
+    clean_resolver: TransferRunResolver,
+    *,
+    allow_missing: bool,
+    output_path: Path,
+    title: str,
+) -> Path:
+    old_rows = build_rows(group_specs, old_resolver, allow_missing=allow_missing)
+    clean_rows = build_rows(group_specs, clean_resolver, allow_missing=allow_missing)
+    clean_by_label = {row["label"]: row for row in clean_rows}
+
+    paired_rows: list[tuple[dict, dict]] = []
+    for old_row in old_rows:
+        clean_row = clean_by_label.get(old_row["label"])
+        if clean_row is None:
+            if allow_missing:
+                continue
+            raise FileNotFoundError(f"Missing clean row for label: {old_row['label']}")
+        paired_rows.append((old_row, clean_row))
+    if not paired_rows:
+        raise FileNotFoundError("No overlapping old/clean rows available for comparison.")
+
+    compare_rows = [
+        {"group": old_row["group"], "label": old_row["label"], "values": old_row["values"]}
+        for old_row, _ in paired_rows
+    ]
+    matrix_old, row_labels, separators = rows_to_matrix(compare_rows)
+    matrix_clean = np.array([clean_row["values"] for _, clean_row in paired_rows], dtype=float)
+    matrix_diff = matrix_clean - matrix_old
+
+    fig_h = max(8, 0.38 * len(row_labels) + 2.8)
+    fig, axes = plt.subplots(1, 3, figsize=(28, fig_h), constrained_layout=True)
+    old_im, _ = _draw_heatmap(
+        axes[0],
+        matrix_old,
+        row_labels,
+        separators,
+        title="Old (external)",
+        cmap="RdYlGn",
+        vmin=-1.0,
+        vmax=1.0,
+        colorbar_label="Accuracy Δ (post - pre)",
+    )
+    clean_im, _ = _draw_heatmap(
+        axes[1],
+        matrix_clean,
+        row_labels,
+        separators,
+        title="Clean reruns (local manifests)",
+        cmap="RdYlGn",
+        vmin=-1.0,
+        vmax=1.0,
+        colorbar_label="Accuracy Δ (post - pre)",
+    )
+    diff_max = max(0.05, float(np.nanmax(np.abs(matrix_diff))))
+    diff_im, _ = _draw_heatmap(
+        axes[2],
+        matrix_diff,
+        row_labels,
+        separators,
+        title="Clean - old",
+        cmap="RdBu_r",
+        vmin=-diff_max,
+        vmax=diff_max,
+        colorbar_label="Δ difference",
+    )
+    fig.colorbar(old_im, ax=axes[:2], shrink=0.78, label="Accuracy Δ (post - pre)")
+    fig.colorbar(diff_im, ax=axes[2], shrink=0.78, label="Δ difference (clean - old)")
+    fig.suptitle(title, fontsize=18, fontweight="bold")
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(output_path, dpi=200, bbox_inches="tight")
+    plt.close(fig)
+    _write_run_manifest(
+        output_path,
+        {
+            "old_resolver": old_resolver.describe(),
+            "clean_resolver": clean_resolver.describe(),
+            "rows": [
+                {
+                    "group": old_row["group"],
+                    "label": old_row["label"],
+                    "glob": old_row["glob"],
+                    "old_run_dir": str(old_row["run_dir"]),
+                    "clean_run_dir": str(clean_row["run_dir"]),
+                }
+                for old_row, clean_row in paired_rows
+            ],
+        },
+    )
+    return output_path
+
+
+def _selected_specs(plot_set: str) -> list[tuple[str, list[dict], str]]:
+    items: list[tuple[str, list[dict], str]] = []
+    if plot_set in {"standard", "all"}:
+        items.append(
+            (
+                "standard",
+                standard_specs(),
+                "Training Transfer Heatmap\n"
+                "One row per training run; explicit source selection avoids mixing old, clean, "
+                "and local scratch results",
+            )
+        )
+    if plot_set in {"adversarial", "all"}:
+        items.append(
+            (
+                "adversarial",
+                adversarial_specs(),
+                "Adversarial / Train-As-Other Heatmap\n"
+                "One row per completed adversarial run; explicit source selection avoids "
+                "mixing run families",
+            )
+        )
+    return items
+
+
+def _build_clean_resolver(manifest_args: list[str]) -> TransferRunResolver:
+    manifest_paths = [Path(path) for path in manifest_args]
+    return TransferRunResolver.clean(manifest_paths=manifest_paths or None)
+
+
 def main() -> None:
-    standard_title = (
-        "Training Transfer Heatmap (No Opponent Averaging, Standard Completed Runs)\n"
-        "One row per training run; AE / rank columns omitted until we lock the exact "
-        "definition"
-    )
-    adversarial_title = (
-        "Adversarial / Train-As-Other Heatmap\n"
-        "One row per completed adversarial run; AE / rank columns omitted until we lock "
-        "the exact definition"
-    )
-    print(
-        plot_heatmap(
-            standard_specs(),
-            STANDARD_OUTPUT,
-            standard_title,
+    args = parse_args()
+    selected = _selected_specs(args.plot_set)
+
+    if args.source == "old":
+        resolver = TransferRunResolver.old()
+        for plot_key, specs, title in selected:
+            output_path = args.output_dir / "old" / f"transfer_heatmap_{plot_key}.png"
+            print(
+                plot_source_heatmap(
+                    specs,
+                    resolver,
+                    allow_missing=args.allow_missing,
+                    output_path=output_path,
+                    title=f"{title}\nSource: old external results",
+                )
+            )
+        return
+
+    if args.source == "clean":
+        resolver = _build_clean_resolver(args.clean_manifest)
+        for plot_key, specs, title in selected:
+            output_path = args.output_dir / "clean" / f"transfer_heatmap_{plot_key}.png"
+            print(
+                plot_source_heatmap(
+                    specs,
+                    resolver,
+                    allow_missing=args.allow_missing,
+                    output_path=output_path,
+                    title=f"{title}\nSource: clean local reruns",
+                )
+            )
+        return
+
+    old_resolver = TransferRunResolver.old()
+    clean_resolver = _build_clean_resolver(args.clean_manifest)
+    for plot_key, specs, title in selected:
+        output_path = args.output_dir / "compare" / f"transfer_heatmap_{plot_key}_old_vs_clean.png"
+        print(
+            plot_compare_heatmap(
+                specs,
+                old_resolver,
+                clean_resolver,
+                allow_missing=args.allow_missing,
+                output_path=output_path,
+                title=f"{title}\nComparison: old external vs clean local reruns",
+            )
         )
-    )
-    print(
-        plot_heatmap(
-            adversarial_specs(),
-            ADVERSARIAL_OUTPUT,
-            adversarial_title,
-        )
-    )
 
 
 if __name__ == "__main__":

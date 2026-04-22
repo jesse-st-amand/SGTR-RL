@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import argparse
 import json
 from collections import defaultdict
 from pathlib import Path
@@ -10,14 +11,9 @@ from pathlib import Path
 import matplotlib.pyplot as plt
 import numpy as np
 
+from sgtr_rl.transfer_result_sources import TransferRunResolver
+
 ROOT = Path(__file__).resolve().parents[1]
-LOCAL_RESULTS_DIR = ROOT / "results"
-EXTERNAL_RESULTS_DIR = ROOT.parent / "self-rec-research" / "_external" / "SGTR-RL" / "results"
-RESULTS_DIR = (
-    LOCAL_RESULTS_DIR
-    if (LOCAL_RESULTS_DIR / "01_sft_pw_vs_qwen3_30b_tinker_small__20260324_130227").exists()
-    else EXTERNAL_RESULTS_DIR
-)
 OUTPUT_DIR = ROOT / "results" / "transfer_plots"
 
 DATASET_ORDER = ["WikiSum", "BigCode", "PKU", "ShareGPT"]
@@ -30,6 +26,17 @@ DATASET_KEYS = {
     "BigCode": "bigcodebench",
     "PKU": "pku",
 }
+
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        description="Plot transfer family panels from explicit sources."
+    )
+    parser.add_argument("--source", choices=["old", "clean"], default="old")
+    parser.add_argument("--clean-manifest", action="append", default=[])
+    parser.add_argument("--allow-missing", action="store_true")
+    parser.add_argument("--output-dir", type=Path, default=OUTPUT_DIR)
+    return parser.parse_args()
 
 SELF_GROUPS = {
     "llama_self": {
@@ -153,28 +160,6 @@ SELF_GROUPS = {
         ],
     },
 }
-
-
-def resolve_completed(glob_pattern: str) -> Path:
-    matches = sorted(RESULTS_DIR.glob(glob_pattern))
-    if not matches:
-        raise FileNotFoundError(f"No matches for {glob_pattern}")
-    completed: list[Path] = []
-    for match in matches:
-        status_path = match / "status.json"
-        if not status_path.exists():
-            continue
-        try:
-            status = json.loads(status_path.read_text()).get("status")
-        except Exception:
-            status = None
-        if status == "completed":
-            completed.append(match)
-    if not completed:
-        raise FileNotFoundError(f"No completed runs for {glob_pattern}")
-    return completed[-1]
-
-
 def load_metrics_by_step(run_dir: Path) -> dict[int, dict]:
     merged: dict[int, dict] = defaultdict(dict)
     with (run_dir / "metrics" / "metrics.jsonl").open() as f:
@@ -330,8 +315,18 @@ def task_metric_candidates(trained_task: str, eval_task: str) -> list[str]:
     return base[trained_task][eval_task]
 
 
-def value_pair_for_dataset(family: dict, trained_on: str, eval_dataset: str) -> tuple[float, float]:
-    run_dir = resolve_completed(family["dataset_runs"][trained_on])
+def value_pair_for_dataset(
+    resolver: TransferRunResolver,
+    family: dict,
+    trained_on: str,
+    eval_dataset: str,
+    *,
+    allow_missing: bool,
+) -> tuple[float, float] | None:
+    resolved = resolver.resolve(family["dataset_runs"][trained_on], required=not allow_missing)
+    if resolved is None:
+        return None
+    run_dir = resolved.run_dir
     pre_row, post_row = get_first_last(run_dir)
     if eval_dataset == trained_on:
         return float(pre_row["val/accuracy"]), float(post_row["val/accuracy"])
@@ -339,8 +334,18 @@ def value_pair_for_dataset(family: dict, trained_on: str, eval_dataset: str) -> 
     return pick_metric(pre_row, candidates), pick_metric(post_row, candidates)
 
 
-def value_pair_for_task(family: dict, trained_on: str, eval_task: str) -> tuple[float, float]:
-    run_dir = resolve_completed(family["task_runs"][trained_on])
+def value_pair_for_task(
+    resolver: TransferRunResolver,
+    family: dict,
+    trained_on: str,
+    eval_task: str,
+    *,
+    allow_missing: bool,
+) -> tuple[float, float] | None:
+    resolved = resolver.resolve(family["task_runs"][trained_on], required=not allow_missing)
+    if resolved is None:
+        return None
+    run_dir = resolved.run_dir
     pre_row, post_row = get_first_last(run_dir)
     candidates = task_metric_candidates(trained_on, eval_task)
     return pick_metric(pre_row, candidates), pick_metric(post_row, candidates)
@@ -430,7 +435,13 @@ def style_task_background(ax, trained_on: str) -> None:
     ax.axvspan(trained_idx - 0.48, trained_idx + 0.48, color="#f5e8b3", alpha=0.35, zorder=0)
 
 
-def plot_dataset_panels(group_key: str) -> Path:
+def plot_dataset_panels(
+    resolver: TransferRunResolver,
+    group_key: str,
+    *,
+    allow_missing: bool,
+    output_path: Path,
+) -> Path:
     group = SELF_GROUPS[group_key]
     fig, axes = plt.subplots(2, 2, figsize=(14, 9), sharey=True, constrained_layout=True)
     axes = axes.flatten()
@@ -441,7 +452,16 @@ def plot_dataset_panels(group_key: str) -> Path:
         xs = np.arange(len(DATASET_ORDER))
         for idx, eval_dataset in enumerate(DATASET_ORDER):
             for offset, family in zip(offsets, group["families"]):
-                pre, post = value_pair_for_dataset(family, trained_on, eval_dataset)
+                pair = value_pair_for_dataset(
+                    resolver,
+                    family,
+                    trained_on,
+                    eval_dataset,
+                    allow_missing=allow_missing,
+                )
+                if pair is None:
+                    continue
+                pre, post = pair
                 draw_arrow(ax, idx + offset, pre, post, family["color"])
 
         ax.set_title(f"Trained on: {trained_on}", fontsize=13, fontweight="bold")
@@ -454,14 +474,24 @@ def plot_dataset_panels(group_key: str) -> Path:
     axes[0].set_ylabel("Accuracy")
     axes[2].set_ylabel("Accuracy")
     add_common_legend(fig, group["families"])
-    fig.suptitle(f"{group['title']}\n{group['subtitle']}", fontsize=16, fontweight="bold")
-    group["dataset_output"].parent.mkdir(parents=True, exist_ok=True)
-    fig.savefig(group["dataset_output"], dpi=200, bbox_inches="tight")
+    fig.suptitle(
+        f"{group['title']} ({resolver.source_name} source)\n{group['subtitle']}",
+        fontsize=16,
+        fontweight="bold",
+    )
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(output_path, dpi=200, bbox_inches="tight")
     plt.close(fig)
-    return group["dataset_output"]
+    return output_path
 
 
-def plot_task_panels(group_key: str) -> Path:
+def plot_task_panels(
+    resolver: TransferRunResolver,
+    group_key: str,
+    *,
+    allow_missing: bool,
+    output_path: Path,
+) -> Path:
     group = SELF_GROUPS[group_key]
     fig, axes = plt.subplots(2, 2, figsize=(14, 9), sharey=True, constrained_layout=True)
     axes = axes.flatten()
@@ -472,7 +502,16 @@ def plot_task_panels(group_key: str) -> Path:
         xs = np.arange(len(TASK_EVAL_ORDER))
         for idx, eval_task in enumerate(TASK_EVAL_ORDER):
             for offset, family in zip(offsets, group["families"]):
-                pre, post = value_pair_for_task(family, trained_on, eval_task)
+                pair = value_pair_for_task(
+                    resolver,
+                    family,
+                    trained_on,
+                    eval_task,
+                    allow_missing=allow_missing,
+                )
+                if pair is None:
+                    continue
+                pre, post = pair
                 draw_arrow(ax, idx + offset, pre, post, family["color"])
 
         ax.set_title(f"Trained on: {trained_on}", fontsize=13, fontweight="bold")
@@ -485,17 +524,47 @@ def plot_task_panels(group_key: str) -> Path:
     axes[0].set_ylabel("Accuracy")
     axes[2].set_ylabel("Accuracy")
     add_common_legend(fig, group["families"])
-    fig.suptitle(f"{group['title']}\n{group['subtitle']}", fontsize=16, fontweight="bold")
-    group["task_output"].parent.mkdir(parents=True, exist_ok=True)
-    fig.savefig(group["task_output"], dpi=200, bbox_inches="tight")
+    fig.suptitle(
+        f"{group['title']} ({resolver.source_name} source)\n{group['subtitle']}",
+        fontsize=16,
+        fontweight="bold",
+    )
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(output_path, dpi=200, bbox_inches="tight")
     plt.close(fig)
-    return group["task_output"]
+    return output_path
 
 
 def main() -> None:
+    args = parse_args()
+    resolver = (
+        TransferRunResolver.old()
+        if args.source == "old"
+        else TransferRunResolver.clean(
+            manifest_paths=[Path(path) for path in args.clean_manifest] or None
+        )
+    )
     for group_key in SELF_GROUPS:
-        print(plot_dataset_panels(group_key))
-        print(plot_task_panels(group_key))
+        print(
+            plot_dataset_panels(
+                resolver,
+                group_key,
+                allow_missing=args.allow_missing,
+                output_path=args.output_dir
+                / args.source
+                / f"{group_key}_dataset_transfer_by_family.png",
+            )
+        )
+        print(
+            plot_task_panels(
+                resolver,
+                group_key,
+                allow_missing=args.allow_missing,
+                output_path=args.output_dir
+                / args.source
+                / f"{group_key}_task_transfer_by_family.png",
+            )
+        )
 
 
 if __name__ == "__main__":
