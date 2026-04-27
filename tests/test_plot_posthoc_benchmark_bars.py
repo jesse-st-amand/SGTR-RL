@@ -2,7 +2,7 @@
 
 import json
 
-from scripts.plot_posthoc_benchmark_bars import generate_plot
+from sgtr_rl.scripts.plot_posthoc_benchmark_bars import generate_plot
 
 
 def _write_eval_dir(path, *, source_run_dir: str, metrics: dict, base_model_only: bool) -> None:

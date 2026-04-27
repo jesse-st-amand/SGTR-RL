@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from scripts.publish_tinker_run_checkpoints import (
+from sgtr_rl.scripts.publish_tinker_run_checkpoints import (
     load_final_tinker_paths,
     resolve_run_dir,
 )

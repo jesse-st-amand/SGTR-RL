@@ -5,7 +5,7 @@ from pathlib import Path
 
 import yaml
 
-from scripts.plot_checkpoint_cross_model_heatmap import generate_plot
+from sgtr_rl.scripts.plot_checkpoint_cross_model_heatmap import generate_plot
 
 
 def _write_source_run(run_dir: Path, generator_model: str) -> None:

@@ -6,7 +6,7 @@ from types import SimpleNamespace
 import pytest
 import yaml
 
-from scripts.chat_tinker_checkpoint import (
+from sgtr_rl.scripts.chat_tinker_checkpoint import (
     ChatTarget,
     _default_transcript_path,
     _find_latest_run,

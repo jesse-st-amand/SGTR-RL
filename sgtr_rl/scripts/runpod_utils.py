@@ -82,7 +82,7 @@ def build_train_command(
         "3.12",
         "python",
         "-m",
-        "scripts.train",
+        "sgtr_rl.scripts.train",
         "--config",
         experiment_config_path,
         "--runtime",

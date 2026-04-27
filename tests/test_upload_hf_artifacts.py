@@ -1,6 +1,6 @@
 """Tests for scripts.upload_hf_artifacts."""
 
-from scripts.upload_hf_artifacts import build_upload_target
+from sgtr_rl.scripts.upload_hf_artifacts import build_upload_target
 
 
 def test_build_upload_target_defaults_to_repo_relative_path(tmp_path):

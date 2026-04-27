@@ -5,7 +5,7 @@ import json
 import pytest
 import yaml
 
-from scripts.benchmark_checkpoint import (
+from sgtr_rl.scripts.benchmark_checkpoint import (
     _load_extra_benchmark_configs,
     _read_tinker_sampler_path,
     _resolve_checkpoint_run,

@@ -124,7 +124,7 @@ def main(argv: list[str] | None = None) -> None:
         cmd = [
             sys.executable,
             "-m",
-            "scripts.benchmark_checkpoint",
+            "sgtr_rl.scripts.benchmark_checkpoint",
             "--run-dir",
             str(run_dir),
             "--extra-benchmark-config",

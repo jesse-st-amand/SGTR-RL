@@ -155,7 +155,7 @@ def build_train_command(
     command = [
         sys.executable,
         "-m",
-        "scripts.train",
+        "sgtr_rl.scripts.train",
         "--config",
         config,
         "--exists",

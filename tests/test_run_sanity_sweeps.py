@@ -1,6 +1,6 @@
 """Tests for scripts.run_sanity_sweeps."""
 
-from scripts.run_sanity_sweeps import SweepRun, build_run_plan, build_train_command
+from sgtr_rl.scripts.run_sanity_sweeps import SweepRun, build_run_plan, build_train_command
 
 
 def test_build_run_plan_defaults_to_size_sweep():
