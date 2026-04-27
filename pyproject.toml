@@ -9,7 +9,6 @@ description = "SGTR-RL project"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
-    "self-rec-framework",
     "tinker-cookbook @ git+https://github.com/thinking-machines-lab/tinker-cookbook.git",
     "tinker>=0.9.0",
     "inspect-ai>=0.3.0",
@@ -28,9 +27,6 @@ dependencies = [
     "wandb>=0.25.0",
     "huggingface-hub>=0.20",
 ]
-
-[tool.uv.sources]
-self-rec-framework = { path = "../self-rec-framework", editable = true }
 
 [project.scripts]
 sgtr-train = "sgtr_rl.scripts.train:main"
