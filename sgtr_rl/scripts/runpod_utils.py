@@ -128,23 +128,25 @@ def build_startup_script(
         f"git checkout {shlex.quote(repo_ref)}",
     ]
 
+    # Clone editable dependencies into subdirectories of the workspace
     for dep in editable_deps:
         parent = str(Path(dep.path).parent)
         lines.append(f"mkdir -p {shlex.quote(parent)}")
-        lines.append(f"git clone {shlex.quote(dep.repo_url)} {shlex.quote(dep.path)}")
+        clone_cmd = f"git clone {shlex.quote(dep.repo_url)} {shlex.quote(dep.path)}"
+        lines.append(clone_cmd)
         if dep.ref:
-            lines.append(f"git -C {shlex.quote(dep.path)} checkout {shlex.quote(dep.ref)}")
+            lines.append(
+                f"git -C {shlex.quote(dep.path)} checkout {shlex.quote(dep.ref)}"
+            )
 
-    lines.extend(
-        [
-            f"cat > {shlex.quote(remote_runtime_path)} <<'YAML'",
-            runtime_yaml_text.rstrip(),
-            "YAML",
-            f"cat > {shlex.quote(remote_config_path)} <<'EXPYAML'",
-            experiment_config_yaml.rstrip(),
-            "EXPYAML",
-        ]
-    )
+    lines.extend([
+        f"cat > {shlex.quote(remote_runtime_path)} <<'YAML'",
+        runtime_yaml_text.rstrip(),
+        "YAML",
+        f"cat > {shlex.quote(remote_config_path)} <<'EXPYAML'",
+        experiment_config_yaml.rstrip(),
+        "EXPYAML",
+    ])
     if cache_dir:
         lines.extend(
             [
@@ -188,7 +190,10 @@ def build_pod_request(
         cache_dir=runtime.local.cache_dir,
     )
 
-    network_volume_id = runtime.runpod.network_volume_id or os.getenv("RUNPOD_NETWORK_VOLUME_ID")
+    # Resolve network volume ID: explicit config value, else $RUNPOD_NETWORK_VOLUME_ID
+    network_volume_id = runtime.runpod.network_volume_id or os.getenv(
+        "RUNPOD_NETWORK_VOLUME_ID"
+    )
 
     payload: dict[str, Any] = {
         "name": make_pod_name(training_config.experiment_name),

@@ -9,7 +9,7 @@ Focuses on properties that prevent silent data bugs:
 import json
 from pathlib import Path
 
-from scripts.prepare_data import (
+from sgtr_rl.scripts.prepare_data import (
     _find_control_opponent,
     _run_all_extractions,
     run_extraction,

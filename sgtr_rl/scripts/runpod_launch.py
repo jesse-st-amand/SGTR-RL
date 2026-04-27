@@ -10,7 +10,7 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
-from scripts.runpod_utils import RunPodClient, build_pod_request
+from sgtr_rl.scripts.runpod_utils import RunPodClient, build_pod_request
 from sgtr_rl.config import load_training_config
 from sgtr_rl.runtime_config import load_runtime_config
 

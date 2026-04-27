@@ -16,7 +16,7 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
-from scripts.plot_checkpoint_cross_model_heatmap import generate_plot
+from sgtr_rl.scripts.plot_checkpoint_cross_model_heatmap import generate_plot
 
 DEFAULT_RUN_PREFIXES = [
     "01_sft_pw_vs_qwen",
